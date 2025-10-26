@@ -47,7 +47,6 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Xbox 360'" Label="Configuration">
     <ConfigurationType>DynamicLibrary</ConfigurationType>
-    <CharacterSet>MultiByte</CharacterSet>
     <UseOfAtl>false</UseOfAtl>
     <PlatformToolset>2010-01</PlatformToolset>
   </PropertyGroup>
@@ -472,7 +471,7 @@
     </ClCompile>
     <Link>
       <AdditionalOptions>/ignore:4089 /dll /entry:"_DllMainCRTStartup" /include:"XboxKrnlBuildNumber" %(AdditionalOptions)</AdditionalOptions>
-      <AdditionalDependencies>libcmt.lib;d3d9ltcg.lib;d3dx9.lib;xgraphics.lib;xapilib.lib;xaudio2.lib;x3daudioltcg.lib;xmcoreltcg.lib;xboxkrnl.lib;xbdm.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>libcmt.lib;d3d9ltcg.lib;d3dx9.lib;xgraphics.lib;xapilib.lib;xaudio2.lib;x3daudioltcg.lib;xmcoreltcg.lib;xboxkrnl.lib;xbdm.lib;xnet.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -686,6 +685,8 @@
     <None Include="xex.xml" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Detour.cpp" />
+    <ClCompile Include="HaloHooks.cpp" />
     <ClCompile Include="Sunrise2.cpp">
       <InlineFunctionExpansion Condition="'$(Configuration)|$(Platform)'=='Release_LTCG|Xbox 360'">AnySuitable</InlineFunctionExpansion>
       <InlineFunctionExpansion Condition="'$(Configuration)|$(Platform)'=='Rel-Obf|Xbox 360'">AnySuitable</InlineFunctionExpansion>
@@ -702,6 +703,8 @@
     <ClCompile Include="Utilities.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Detour.h" />
+    <ClInclude Include="HaloHooks.h" />
     <ClInclude Include="SimpleIni.h" />
     <ClInclude Include="Sunrise2.h" />
     <ClInclude Include="CoreHooks.h" />

@@ -8,6 +8,8 @@
     <ClCompile Include="stdafx.cpp" />
     <ClCompile Include="Utilities.cpp" />
     <ClCompile Include="CoreHooks.cpp" />
+    <ClCompile Include="Detour.cpp" />
+    <ClCompile Include="HaloHooks.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h" />
@@ -15,5 +17,7 @@
     <ClInclude Include="Sunrise2.h" />
     <ClInclude Include="CoreHooks.h" />
     <ClInclude Include="SimpleIni.h" />
+    <ClInclude Include="Detour.h" />
+    <ClInclude Include="HaloHooks.h" />
   </ItemGroup>
 </Project>

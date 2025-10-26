@@ -11,8 +11,12 @@
 #include "stdafx.h"
 #include "CoreHooks.h"
 #include "Utilities.h"
+#include <cstdarg>
+#include "Detour.h"
+#include <ppcintrinsics.h>
+#include "HaloHooks.h"
 
-const char* SunriseVers = "2.1.0";
+const char* SunriseVers = "2.2.0";
 
 in_addr sunrise_ip = { 174, 136, 231, 17 };
 INT sunrise_port = 8000;
@@ -25,18 +29,152 @@ BOOL bLoopHasComplete = FALSE;
 BOOL bIsDevkit; // Set on plugin load. Skips doing xnotify on devkits
 DWORD LastTitleId;
 
-DWORD Halo3InternalBeta = 0x4D53883A;
-DWORD Halo3ExternalBeta = 0x4D53880C;
-DWORD Halo3 = 0x4D5307E6;
-DWORD Halo3ODST = 0x4D530877;
-DWORD HaloReach = 0x4D53085B;
+const DWORD Halo3InternalBeta = 0x4D53883A;
+const DWORD Halo3ExternalBeta = 0x4D53880C;
+const DWORD Halo3 = 0x4D5307E6;
+const DWORD Halo3ODST = 0x4D530877;
+const DWORD HaloReach = 0x4D53085B;
+const DWORD HaloReachBeta = 0x4D53885C;
+const DWORD DestinyPreRelease = 0x41560907;
+const DWORD Destiny = 0x415608F8;
+
+BOOL IsHalo(DWORD titleId) {
+	switch (titleId) {
+		case Halo3InternalBeta:
+		case Halo3ExternalBeta:
+		case Halo3:
+		case Halo3ODST:
+		case HaloReach:
+		case HaloReachBeta:
+			return true;
+		default:
+			return false;
+	}
+}
 
 BOOL bAllowRetailPlayers = TRUE;
 BOOL bIgnoreTrueskill = FALSE;
+BOOL bLogEventsToStdout = TRUE;
+BOOL bClearCacheOnLaunch = TRUE;
+char* BlamnetDomain = "xbl.lsp.blam.network";
 
 DWORD Halo3_Retail_XUserReadStats_Addr = 0x825B6358;
 DWORD Halo3_Epsilon_XUserReadStats_Addr = 0x826E77E8;
 
+
+
+VOID SpoofTitleVersion(PLDR_DATA_TABLE_ENTRY moduleTable) {
+	if (!moduleTable) {
+		moduleTable = *XexExecutableModuleHandle;
+	}
+
+	PLDR_DATA_TABLE_ENTRY PLDR_HaloXex = (PLDR_DATA_TABLE_ENTRY)moduleTable;
+	XEX_EXECUTION_ID* pExecutionId = (XEX_EXECUTION_ID*)RtlImageXexHeaderField(PLDR_HaloXex->XexHeaderBase, XEX_HEADER_EXECUTION_ID);
+	XEX_SECTION_INFO* sectionInfo = (XEX_SECTION_INFO*)RtlImageXexHeaderField(PLDR_HaloXex->XexHeaderBase, XEX_HEADER_SECTION_TABLE);
+
+	DWORD TitleID = pExecutionId->TitleID;
+
+	Sunrise_Dbg("SpoofTitleVersion called with title ID %08X", TitleID)
+
+	SetTitleId(TitleID);
+
+	if (TitleID == Halo3ExternalBeta || TitleID == Halo3 || TitleID == Halo3InternalBeta) {
+		switch (PLDR_HaloXex->TimeDateStamp) {
+			case 0x4649437B: // h3 beta tu1
+			{
+				SetTitleId(Halo3ExternalBeta);
+				pExecutionId->TitleID = Halo3;
+				pExecutionId->Version = 0x32A;
+				RenameSPA(sectionInfo, Halo3ExternalBeta, Halo3, 0x1F6);
+				break;
+			}
+			case 0x4637C172: { // h3 beta
+				SetTitleId(Halo3ExternalBeta);
+				pExecutionId->TitleID = Halo3;
+				pExecutionId->Version = 0x32A;
+				RenameSPA(sectionInfo, Halo3, Halo3, 0x1F6);
+				RenameSPA(sectionInfo, Halo3ExternalBeta, Halo3, 0x1F6);
+				break;
+			}
+			case 0x45EF61A8: { // mar 7 cache release
+				SetTitleId(Halo3ExternalBeta);
+				pExecutionId->TitleID = Halo3;
+				pExecutionId->Version = 0x32A;
+				RenameSPA(sectionInfo, Halo3, Halo3, 0x1F6);
+				RenameSPA(sectionInfo, Halo3ExternalBeta, Halo3, 0x1F6);
+				break;
+			}
+			case 0x45F1026C: { // mar 9 cache release
+				SetTitleId(Halo3ExternalBeta);
+				pExecutionId->TitleID = Halo3;
+				pExecutionId->Version = 0x32A;
+				RenameSPA(sectionInfo, Halo3, Halo3, 0x1F6);
+				RenameSPA(sectionInfo, Halo3ExternalBeta, Halo3, 0x1F6);
+				break;
+			}
+			case 0x455E2AC3: { // pimps
+				SetTitleId(Halo3ExternalBeta);
+				pExecutionId->TitleID = Halo3;
+				pExecutionId->Version = 0x32A;
+				RenameSPA(sectionInfo, Halo3, Halo3, 0x1F6);
+				RenameSPA(sectionInfo, Halo3ExternalBeta, Halo3, 0x1F6);
+				break;
+			}
+			case 0x46BC1368: { // 11729.07.08.10.0021.main
+				pExecutionId->TitleID = Halo3;
+				pExecutionId->Version = 0x32A;
+				RenameSPA(sectionInfo, Halo3, Halo3, 0x1F6);
+				break;
+			}
+			case 0x46B2D153: { // 11637.07.08.02.2348.release
+				SetTitleId(Halo3InternalBeta);
+				pExecutionId->TitleID = Halo3;
+				pExecutionId->Version = 0x32A;
+				RenameSPA(sectionInfo, Halo3, Halo3, 0x1F6);
+				RenameSPA(sectionInfo, Halo3InternalBeta, Halo3, 0x1F6);
+				break;
+			}
+			case 0x46CA8883: { // 11856
+				pExecutionId->TitleID = Halo3;
+				pExecutionId->Version = 0x32A;
+				RenameSPA(sectionInfo, TitleID, Halo3, 0x630);
+				break;
+			}
+			case 0x451313B9: { // first playtest
+				pExecutionId->TitleID = Halo3;
+				pExecutionId->Version = 0x32A;
+				RenameSPA(sectionInfo, TitleID, Halo3, 0x630);
+				break;
+			}
+		}
+	}
+	else if (TitleID == HaloReach) {
+		switch (PLDR_HaloXex->TimeDateStamp) {
+			case 0x4E559FF8: //reach tu
+				break;
+			default: {
+				pExecutionId->TitleID = HaloReach;
+				pExecutionId->Version = 257;
+				RenameSPA(sectionInfo, TitleID, HaloReach, 0x1F6);
+				break;
+			}
+		}
+	}
+	else if (TitleID == HaloReachBeta) {
+		Sunrise_Dbg("Halo: Reach Beta detected! Spoofing...");
+
+		pExecutionId->TitleID = HaloReach;
+		pExecutionId->Version = 257;
+		RenameSPA(sectionInfo, TitleID, HaloReach, 0x1F6); 
+	}
+	else if (TitleID == DestinyPreRelease) {
+		Sunrise_Dbg("Destiny Pre Release detected! Spoofing...");
+
+		pExecutionId->TitleID = Destiny;
+		pExecutionId->Version = 23; // guessed
+		RenameSPA(sectionInfo, TitleID, Destiny, 0x160);
+	}
+}
 
 VOID AllowRetailPlayers_HALO3_RETAIL()
 {
@@ -79,233 +217,379 @@ VOID AllowRetailPlayers_HALOREACH_RETAIL()
 	*((DWORD*)(0x82287B60)) = 0x60000000;
 }
 
-VOID Initialise()
-{
-	hXam = GetModuleHandle(MODULE_XAM);
-
-	if (MountPath(MOUNT_POINT, GetMountPath()) != 0)
-	{
-		Sunrise_Dbg("Failed to set mount point!");
+VOID SetupHaloPatches() {
+	PLDR_DATA_TABLE_ENTRY PLDR_Xex = (PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle;
+	if (!PLDR_Xex) {
+		Sunrise_Dbg("PLDR_HaloXex was null, weird");
 		return;
 	}
+	XEX_EXECUTION_ID* pExecutionId = (XEX_EXECUTION_ID*)RtlImageXexHeaderField(PLDR_Xex->XexHeaderBase, XEX_HEADER_EXECUTION_ID);
 
-	while (bRunContinuous)
+	DWORD TitleID = pExecutionId->TitleID;
+	if (TitleID != LastTitleId)
 	{
+		LastTitleId = TitleID; // Set the last title id  to the current title id so we don't loop rechecking
 
-		DWORD TitleID = XamGetCurrentTitleId();
+		XEX_SECTION_INFO* sectionInfo = (XEX_SECTION_INFO*)RtlImageXexHeaderField(PLDR_Xex->XexHeaderBase, XEX_HEADER_SECTION_TABLE);
 
-		if (TitleID != LastTitleId)
+		Sunrise_Dbg("Loaded title %08X v %d", pExecutionId->TitleID, pExecutionId->Version);
+
+		Readini(); // Read the ini each time Halo is loaded to avoid having to reload the plugin
+
+		if (IsHalo(TitleID)) {
+			SetupLSPHooks();
+			SpoofTitleVersion(PLDR_Xex);
+		}
+
+		if (TitleID == Halo3 || TitleID == Halo3ExternalBeta || TitleID == Halo3InternalBeta) // Check for both regular and alpha/beta title ids
 		{
-			LastTitleId = TitleID; // Set the last title id  to the current title id so we don't loop rechecking
-
-			if (TitleID == Halo3 || TitleID == Halo3ExternalBeta || TitleID == Halo3InternalBeta) // Check for both regular and alpha/beta title ids
+			switch (PLDR_Xex->TimeDateStamp) // Detects the exact xex by timestamp. Prevents patching static addresses in the wrong xex.
 			{
-				RegisterActiveServer(sunrise_ip, sunrise_port, sunrise_description);
+			case 0x48C1FB10: // Halo 3 Retail TU2
+			{
+				Sunrise_Dbg("Halo 3 Retail detected! Initialising hooks...");
 
-				Readini(); // Read the ini each time Halo is loaded to avoid having to reload the plugin
+				if (bAllowRetailPlayers)
+					AllowRetailPlayers_HALO3_RETAIL();
 
-				PLDR_DATA_TABLE_ENTRY PLDR_Halo3xex = (PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle;
-				//XexPcToFileHeader((PVOID)0x82000000, &PLDR_Halo3xex);
+				if (bIgnoreTrueskill)
+					SetupXUserReadStatsHook(Halo3_Retail_XUserReadStats_Addr);
 
-				switch (PLDR_Halo3xex->TimeDateStamp) // Detects the exact xex by timestamp. Prevents patching static addresses in the wrong xex.
-				{
-				case 0x48C1FB10: // Halo 3 Retail TU2
-				{
-					Sunrise_Dbg("Halo 3 Retail detected! Initialising hooks...");
-					SetupNetDllHooks();
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x825982F8);
 
-					if (bAllowRetailPlayers)
-						AllowRetailPlayers_HALO3_RETAIL();
-
-					if (bIgnoreTrueskill)
-						SetupXUserReadStatsHook(Halo3_Retail_XUserReadStats_Addr);
-
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
-				case 0x46CA8883: // Halo 3 Epsilon Aug 20th 2007
-				{
-					Sunrise_Dbg("Halo 3 Epsilon (Aug 20th) detected! Initialising hooks...");
-					SetupNetDllHooks();
-
-					if (bIgnoreTrueskill)
-						SetupXUserReadStatsHook(Halo3_Epsilon_XUserReadStats_Addr);
-
-					// Enable debug logs.
-					*((DWORD*)(0x82236154)) = 0x60000000;
-
-					// Add Sunrise to the debug logs.
-					RegisterHaloLogger(0x82237920);
-
-					XNotify(L"Halo Sunrise Initialised!");
-					break;
-				}
-				case 0x4637C172: // Halo 3 Beta May 1st 2007
-				{
-					Sunrise_Dbg("Halo 3 Beta (May 1st) detected! Initialising hooks...");
-					SetupNetDllHooks();
-
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
-				case 0x4649437B: // Halo 3 Beta May 15th 2007
-				{
-					Sunrise_Dbg("Halo 3 Beta (May 15th) detected! Initialising hooks...");
-					SetupNetDllHooks();
-
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
-				case 0x455E2AC3: // Halo 3 Pimps at sea (Alpha)
-				{
-					Sunrise_Dbg("Halo 3 Pimps at sea (Alpha) detected! Initialising hooks...");
-					SetupNetDllHooks();
-
-					// Fix a bug where high rank players can't enter matchmaking.
-					*((DWORD*)(0x82457578)) = 0x3960000C;
-					// Fix another stats bug.
-					*((WORD*)(0x82454BAC)) = 0x4800;
-					// Force the game to save settings even if a newer file is present.
-					*((WORD*)(0x82970B30)) = 0x4800;
-
-					// Enable debug logs.
-					*((DWORD*)(0x823b23d0)) = 0x60000000;
-					// Move them from cache:\\ to d:\\ 
-					const char* reports_path = "d:\\reports\\";
-					memcpy(((char*)(0x820B934C)), reports_path, strlen(reports_path) + 1);
-
-					// Add Sunrise to the debug logs.
-					RegisterHaloLogger(0x823B2CE8);
-
-					XNotify(L"Halo Sunrise Initialised!");
-					break;
-				}
-				case 0x45F10275: // Halo 3 Delta cache_test
-				{
-					Sunrise_Dbg("Halo 3 Delta (cache_test, Mar 9th) detected! Initialising hooks...");
-					SetupNetDllHooks();
-
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
-				case 0x45F1026C: // Halo 3 Delta cache_release
-				{
-					Sunrise_Dbg("Halo 3 Delta (cache_release, Mar 9th) detected! Initialising hooks...");
-					SetupNetDllHooks();
-
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
-				case 0x45EF61A8: // Halo 3 Delta cache_release
-				{
-					Sunrise_Dbg("Halo 3 Delta (cache_release, Mar 7th) detected! Initialising hooks...");
-					SetupNetDllHooks();
-
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
-				default:
-				{
-					Sunrise_Dbg("Unrecognized Halo 3 xex! TimeDateStamp: 0x%X", PLDR_Halo3xex->TimeDateStamp); // Print the timestamp so we can support this xex later if required.
-					SetupNetDllHooks();
-
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
-
-				}
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
 			}
-			else if (TitleID == Halo3ODST)
+			case 0x46CA8883: // Halo 3 Epsilon Aug 20th 2007
 			{
-				RegisterActiveServer(sunrise_ip, sunrise_port, sunrise_description);
+				Sunrise_Dbg("Halo 3 Epsilon (Aug 20th) detected! Initialising hooks...");
 
-				Readini(); // Read the ini each time Halo is loaded to avoid having to reload the plugin
+				if (bIgnoreTrueskill)
+					SetupXUserReadStatsHook(Halo3_Epsilon_XUserReadStats_Addr);
 
-				PLDR_DATA_TABLE_ENTRY PLDR_Halo3ODSTxex = (PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle;
-				switch (PLDR_Halo3ODSTxex->TimeDateStamp) // Detects the exact xex by timestamp. Prevents patching static addresses in the wrong xex.
-				{
-				case 0x49F68EC3: // Halo 3 ODST
-				{
-					Sunrise_Dbg("Halo 3 ODST detected! Initialising hooks...");
-					SetupNetDllHooks();
+				if (bLogEventsToStdout)
+					SetupHalo3EventsHook(0x82235F08);
 
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
-				default:
-				{
-					Sunrise_Dbg("Unrecognized Halo 3 ODST xex! TimeDateStamp: 0x%X", PLDR_Halo3ODSTxex->TimeDateStamp); // Print the timestamp so we can support this xex later if required.
-					SetupNetDllHooks();
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x826C9540);
 
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
+				// Log events to file
+				*((DWORD*)(0x82236154)) = 0x60000000;
 
-				}
+				// Allow Epsilon to load Release maps.
+				*((char*)(0x82232737)) = 1; // skip build string validation
+				*((DWORD*)(0x822401F4)) = 0x48000018; // skip RSA validation
+				*((char*)(0x8223DB7F)) = 1; // another skip RSA validation skip
+
+				// Use TU0 hopper files.
+				*((WORD*)(0x824900EA)) = 11855; // use release title storage
+				
+				XNotify(L"Halo Sunrise Initialised!");
+				break;
 			}
-			else if (TitleID == HaloReach) // Future Reach support
+			case 0x46B2D153: // halo3 cache release xenon 11637.07.08.02.2348.release  Aug  2 2007 23:50:55
 			{
-				RegisterActiveServer(sunrise_ip, sunrise_port, sunrise_description);
+				Sunrise_Dbg("11637.07.08.02.2348.release detected! Initialising hooks...");
+				SetupSpoofHooks();
 
-				Readini(); // Read the ini each time Halo is loaded to avoid having to reload the plugin
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x826C0218);
 
-				PLDR_DATA_TABLE_ENTRY PLDR_HaloReachxex = (PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle;
-				switch (PLDR_HaloReachxex->TimeDateStamp)
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x46BC1368: // 11729.07.08.10.0021.main
+			{
+				Sunrise_Dbg("11729.07.08.10.0021.main detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x82575C00);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x4637C172: // Halo 3 Beta May 1st 2007
+			{
+				Sunrise_Dbg("Halo 3 Beta (May 1st) detected! Initialising hooks...");
+				SetupSpoofHooks();
+				
+				if(bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x824CFA18);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x4649437B: // Halo 3 Beta May 15th 2007
+			{
+				Sunrise_Dbg("Halo 3 Beta (May 15th) detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x824CFA90);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x451313B9: // first playtest
+			{
+				Sunrise_Dbg("Halo 3 first playtest detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x82161700);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x455E2AC3: // Halo 3 Pimps at sea (Alpha)
+			{
+				Sunrise_Dbg("Halo 3 Pimps at sea (Alpha) detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x821711D0);
+
+				// Fix a bug where high rank players can't enter matchmaking.
+				*((DWORD*)(0x82457578)) = 0x3960000C;
+				// Fix another stats bug.
+				*((WORD*)(0x82454BAC)) = 0x4800;
+				
+				// Force the game to save settings even if a newer file is present.
+				*((WORD*)(0x82970B30)) = 0x4800;
+
+				// Enable debug logs.
+				*((DWORD*)(0x823b23d0)) = 0x60000000;
+				// Move them from cache:\\ to d:\\ 
+				const char* reports_path = "d:\\reports\\";
+				memcpy(((char*)(0x820B934C)), reports_path, strlen(reports_path) + 1);
+
+				XNotify(L"Halo Sunrise Initialised!");
+				break;
+			}
+			case 0x45F10275: // Halo 3 Delta cache_test
+			{
+				Sunrise_Dbg("Halo 3 Delta (cache_test, Mar 9th) detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x45F350CB: // halo3 cache profile xenon untracked version  Mar  9 2007 22:15:40
+			{
+				Sunrise_Dbg("halo3 cache profile xenon untracked version  Mar  9 2007 22:15:40 detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x82101418);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x45F1026C: // 08172.07.03.08.2240.delta cache_release
+			{
+				Sunrise_Dbg("Halo 3 08172.07.03.08.2240.delta detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x824BED20);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x45EF61A8: // 08117.07.03.07.1702.delta cache_release
+			{
+				Sunrise_Dbg("Halo 3 Delta 08117.07.03.07.1702.delta detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x824DE540);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			default:
+			{
+				Sunrise_Dbg("Unrecognized Halo 3 xex! TimeDateStamp: 0x%X", PLDR_Xex->TimeDateStamp); // Print the timestamp so we can support this xex later if required.
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			}
+		}
+		else if (TitleID == DestinyPreRelease) // d1a
+		{
+			switch (PLDR_Xex->TimeDateStamp)
+			{
+				case 0x529D59D0:
 				{
-				case 0x4C4AAE66:
-				{
-					Sunrise_Dbg("Halo: Reach detected! Initialising hooks...");
-					SetupNetDllHooks();
+					Sunrise_Dbg("Destiny 1 pre-alpha loaed. I hope you know what youre doing!");
 
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
-				case 0x4E559FF8: //reach tu
-				{
-					Sunrise_Dbg("Halo: Reach TU detected! Initialising hooks...");
-					SetupNetDllHooks();
+					SpoofTitleVersion(PLDR_Xex);
 
-					if (bAllowRetailPlayers) {
-						AllowRetailPlayers_HALOREACH_RETAIL();
-					}
-
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
-				case 0x4CC5E691:
-				{
-					Sunrise_Dbg("Halo: Reach detected! Initialising hooks...");
-					SetupNetDllHooks();
-
-					// Load retail maps.
-					*((DWORD*)(0x823C0244)) = 0x60000000;
-					*((DWORD*)(0x823C01E4)) = 0x60000000;
-					// Havok Patch
-					*((DWORD*)(0x8305C000)) = 0x60000000;
-					*((DWORD*)(0x8305C010)) = 0x60000000;
-
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
-				default:
-				{
-					Sunrise_Dbg("Unrecognized Halo Reach xex! TimeDateStamp: 0x%X", PLDR_HaloReachxex->TimeDateStamp); // Print the timestamp so we can support this xex later if required.
-					SetupNetDllHooks();
-
-					XNotify(L"Halo Sunrise Intialised!");
-					break;
-				}
+					XNotify(L"Destiny Sunrise Initialized!");
 				}
 			}
 		}
-		Sleep(500); // Add a slight delay to the check loop
+		else if (TitleID == Halo3ODST)
+		{
+			switch (PLDR_Xex->TimeDateStamp) // Detects the exact xex by timestamp. Prevents patching static addresses in the wrong xex.
+			{
+			case 0x49F68EC3: // Halo 3 ODST
+			{
+				Sunrise_Dbg("Halo 3 ODST detected! Initialising hooks...");
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			default:
+			{
+				Sunrise_Dbg("Unrecognized Halo 3 ODST xex! TimeDateStamp: 0x%X", PLDR_Xex->TimeDateStamp); // Print the timestamp so we can support this xex later if required.
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			}
+		}
+		else if (TitleID == HaloReach || TitleID == HaloReachBeta)
+		{
+			switch (PLDR_Xex->TimeDateStamp)
+			{
+			case 0x4C4AAE66: // tu0?
+			{
+				Sunrise_Dbg("Halo: Reach detected! Initialising hooks...");
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x4C4AAE6A: // tu0 release internal
+			{
+				Sunrise_Dbg("omaha 11860 cache release internal Initialising hooks...");
+
+				SpoofTitleVersion(PLDR_Xex);
+				// This build has a different public key to normal reach, so we skip it's checks to allow release assets.
+				SetupRSAVerificationHook(0x824D0518);
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x82A01038);
+
+				if (bLogEventsToStdout)
+					SetupHaloReachEventsHook(0x827828F0);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x4C4AB277: // tu0 test
+			{
+				Sunrise_Dbg("omaha 11860 cache test Initialising hooks...");
+
+				SpoofTitleVersion(PLDR_Xex);
+				// This build has a different public key to normal reach, so we skip it's checks to allow release assets.
+				SetupRSAVerificationHook(0x8280D8E8);
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x823C3B70);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x4E559FF8: //reach tu
+			{
+				Sunrise_Dbg("Halo: Reach TU detected! Initialising hooks...");
+
+				if (bAllowRetailPlayers)
+					AllowRetailPlayers_HALOREACH_RETAIL();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x827E2B38);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x4CC5E691: // what build is this?
+			{
+				Sunrise_Dbg("Halo: Reach detected! Initialising hooks...");
+
+				// Load retail maps.
+				*((DWORD*)(0x823C0244)) = 0x60000000;
+				*((DWORD*)(0x823C01E4)) = 0x60000000;
+				// Havok Patch
+				*((DWORD*)(0x8305C000)) = 0x60000000;
+				*((DWORD*)(0x8305C010)) = 0x60000000;
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x4B7F307A: // private alpha
+			{
+				Sunrise_Dbg("Halo: Reach Alpha detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x82937038);
+
+				*((DWORD*)(0x8229732C)) = 0x60000000; // enable log files
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x4BABF021: { // private beta
+				Sunrise_Dbg("Halo: Reach Beta detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x829696F8);
+
+				*((DWORD*)(0x82294284)) = 0x60000000; // enable log files
+
+				break;
+			}
+			case 0x4BBC0DF7: { // Private Beta TU
+				Sunrise_Dbg("Halo: Reach Beta detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x8296A1A0);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			case 0x4BBF8F02: // Public Beta
+			{
+				Sunrise_Dbg("Halo: Reach Beta detected! Initialising hooks...");
+				SetupSpoofHooks();
+
+				if (bClearCacheOnLaunch)
+					SetupXMountUtilityDriveExHook(0x8276BB10);
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			default:
+			{
+				Sunrise_Dbg("Unrecognized Halo Reach xex! TimeDateStamp: 0x%X", PLDR_Xex->TimeDateStamp); // Print the timestamp so we can support this xex later if required.
+
+				XNotify(L"Halo Sunrise Initialized!");
+				break;
+			}
+			}
+		}
 	}
-	bLoopHasComplete = TRUE;
 }
 
+VOID RegisterHaloServer()
+{
+	DWORD titleID = XamGetCurrentTitleId();
+
+	if (IsHalo(titleID)) {
+		RegisterActiveServerDomain(BlamnetDomain, sunrise_description);
+	}
+}
 
 BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
 {
+
 	switch (ul_reason_for_call)
 	{
 	case DLL_PROCESS_ATTACH:
@@ -313,26 +597,19 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserve
 		{
 			Sunrise_Dbg("Plugin load aborted! Disc tray is open");
 			HANDLE hSunrise = hModule;
-			bLoopHasComplete = TRUE; // Make sure we set this so we don't get stuck in a sleep loop when we unload (DLL_PROCESS_DETACH) in a sec.
 			*(WORD*)((DWORD)hSunrise + 64) = 1;
 			return FALSE;
 		}
 
+		SetupLoadHooks(nullptr);
 		bIsDevkit = *(DWORD*)0x8E038610 & 0x8000 ? FALSE : TRUE; // Simple devkit check
 		Sunrise_Dbg("v%s loaded! Running on %s kernel", SunriseVers, bIsDevkit ? "Devkit" : "Retail");
-		ThreadMe((LPTHREAD_START_ROUTINE)Initialise);
-
 		break;
 	case DLL_THREAD_ATTACH:
 		break;
 	case DLL_THREAD_DETACH:
 		break;
 	case DLL_PROCESS_DETACH:
-		bRunContinuous = FALSE; // Exit the continuous loop
-		while (!bLoopHasComplete) // Wait for loop to complete
-			Sleep(100);
-
-		Sleep(500);
 		Sunrise_Dbg("Unloaded!");
 		break;
 

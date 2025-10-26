@@ -1014,6 +1014,18 @@ extern "C" {
 	);
 
 	NTSYSAPI
+		EXPORTNUM(538)
+		DWORD
+		NTAPI
+		XamUserWriteProfileSettings(
+			DWORD dwTitleId,
+			DWORD dwUserIndexRequester,
+			DWORD dwNumSettingIds,
+			const PXUSER_PROFILE_SETTING pSettings,
+			PXOVERLAPPED pXOverlapped OPTIONAL
+		);
+
+	NTSYSAPI
 	EXPORTNUM(542)
 	BOOL
 	NTAPI

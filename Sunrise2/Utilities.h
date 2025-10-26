@@ -13,6 +13,7 @@ DWORD PatchModuleImport(CHAR* Module, CHAR* ImportedModuleName, DWORD Ordinal, D
 BOOL IsTrayOpen();
 VOID ThreadMe(LPTHREAD_START_ROUTINE lpStartAddress);
 VOID XNotify(LPCWSTR pwszStringParam);
+BOOL RenameSPA(PXEX_SECTION_INFO sectionInfo, DWORD old_value, DWORD new_value, DWORD title_id_offset);
 
 DWORD MountPath(PCHAR Drive, PCHAR Device);
 PCHAR GetMountPath();

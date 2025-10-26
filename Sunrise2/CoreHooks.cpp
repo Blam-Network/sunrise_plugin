@@ -1,9 +1,9 @@
 #include "stdafx.h"
 #include "Sunrise2.h"
 #include "Utilities.h"
+#include "Detour.h"
 
 XTITLE_SERVER_INFO activeServer;
-WORD activeServerPort;
 
 int NetDll_socketHook(XNCALLER_TYPE n, int af, int type, int protocol)
 {
@@ -16,18 +16,9 @@ int NetDll_socketHook(XNCALLER_TYPE n, int af, int type, int protocol)
 	return s;
 }
 
-int NetDll_connectHook(XNCALLER_TYPE n, SOCKET s, const sockaddr* name, int namelen)
-{
-	if (n == 1) {
-		((SOCKADDR_IN*)name)->sin_addr.S_un.S_addr = activeServer.inaServer.S_un.S_addr;
-		((SOCKADDR_IN*)name)->sin_port = activeServerPort;
-	}
-
-	return NetDll_connect(n, s, name, namelen);;
-}
-
 int NetDll_XNetStartupHook(XNCALLER_TYPE xnc, XNetStartupParams* xnsp)
 {
+	// For devkits or modded boxes with devkit software.
 	xnsp->cfgFlags |= XNET_STARTUP_BYPASS_SECURITY;
 	return NetDll_XNetStartup(xnc, xnsp);
 }
@@ -55,7 +46,7 @@ int NetDll_XNetServerToInAddrHook(XNCALLER_TYPE n, IN_ADDR address_in, DWORD tit
 }
 
 HANDLE lsp_enum_handle;
-int enumeration_index;
+int lsp_enumeration_index;
 
 int XamCreateEnumeratorHandleHook(DWORD user_index, HXAMAPP app_id, DWORD open_message, DWORD close_message, DWORD extra_size, DWORD item_count, DWORD flags, PHANDLE out_handle)
 {
@@ -63,11 +54,97 @@ int XamCreateEnumeratorHandleHook(DWORD user_index, HXAMAPP app_id, DWORD open_m
 
 	if (open_message == 0x58039) {
 		lsp_enum_handle = *out_handle;
-		enumeration_index = 0;
+		lsp_enumeration_index = 0;
 	}
 
 	return result;
 
+}
+
+DWORD title_id_real = 0;
+VOID SetTitleId(DWORD title_id) {
+	Sunrise_Dbg("SetTitleId(%08X)", title_id)
+	title_id_real = title_id;
+}
+
+DWORD XamContentCreateEnumeratorHook(
+	DWORD dwUserIndex,
+	XCONTENTDEVICEID DeviceID,
+	DWORD dwContentType,
+	DWORD dwContentFlags,
+	DWORD cItem,
+	PDWORD pcbBuffer,
+	PHANDLE phEnum
+) {
+	DWORD current_title_id = XamGetCurrentTitleId();
+	Sunrise_Dbg("XamContentCreateEnumeratorHook for content type %d", dwContentType);
+	Sunrise_Dbg("title_id_real = %08X", title_id_real);
+	Sunrise_Dbg("current_title_id = %08X", title_id_real);
+
+	// If we're title spoofing, dont try to load DLC.
+	if (current_title_id != title_id_real && dwContentType == XCONTENTTYPE_MARKETPLACE) {
+		Sunrise_Dbg("Title spoofing - Returning savegame instead of DLC");
+		dwContentType = XCONTENTTYPE_PUBLISHER;
+	}
+	else if (dwContentType == XCONTENTTYPE_MARKETPLACE) {
+		Sunrise_Dbg("Not spoofing so returning normal DLC.");
+	}
+
+	return XContentCreateEnumerator(
+		dwUserIndex,
+		DeviceID,
+		dwContentType,
+		dwContentFlags,
+		cItem,
+		pcbBuffer,
+		phEnum
+	);
+}
+
+DWORD XamUserReadProfileSettingsHook(
+	DWORD dwTitleId,
+	DWORD dwUserIndexRequester,
+	DWORD dwNumFor,
+	const PXUID pxuidFor,
+	DWORD dwNumSettingIds,
+	const PDWORD pdwSettingIds,
+	PDWORD pcbResults,
+	PXUSER_READ_PROFILE_SETTING_RESULT pResults, // in xonline.h
+	PXOVERLAPPED pXOverlapped OPTIONAL
+) {
+	DWORD current_title_id = XamGetCurrentTitleId();
+	//Sunrise_Dbg("XamUserReadProfileSettingsHook with title ID %08X", dwTitleId);
+	//Sunrise_Dbg("title_id_real = %08X", title_id_real);
+	//Sunrise_Dbg("hook read spoofed=%08X addr=%p thread=%08X", title_id_real, (void*)&title_id_real, GetCurrentThreadId());
+
+	// If we're title spoofing, read settings from the original title id.
+	if (dwTitleId == 0 && title_id_real != current_title_id) {
+		Sunrise_Dbg("Spoofing profile read, using title ID %08X", title_id_real);
+		dwTitleId = title_id_real;
+	}
+
+	return XamUserReadProfileSettings(dwTitleId, dwUserIndexRequester, dwNumFor, pxuidFor, dwNumSettingIds, pdwSettingIds, pcbResults, pResults, pXOverlapped);
+}
+
+DWORD XamUserWriteProfileSettingsHook(
+	DWORD dwTitleId,
+	DWORD dwUserIndex,
+	DWORD dwNumSettings,
+	const PXUSER_PROFILE_SETTING pSettings,
+	PXOVERLAPPED pXOverlapped
+) {
+	DWORD current_title_id = XamGetCurrentTitleId();
+	//Sunrise_Dbg("XamUserWriteProfileSettingsHook with title ID %08X", dwTitleId);
+	//Sunrise_Dbg("title_id_real = %08X", title_id_real);
+	//Sunrise_Dbg("hook read spoofed=%08X addr=%p thread=%08X", title_id_real, (void*)&title_id_real, GetCurrentThreadId());
+
+	// If we're title spoofing, dont overwrite settings.
+	if (dwTitleId == 0 && title_id_real != current_title_id) {
+		Sunrise_Dbg("Spoofing profile write, using title ID %08X", title_id_real);
+		dwTitleId = title_id_real;
+	}
+
+	return XamUserWriteProfileSettings(dwTitleId, dwUserIndex, dwNumSettings, pSettings, pXOverlapped);
 }
 
 
@@ -78,39 +155,42 @@ struct halo_log_event
 	int flags;
 };
 
-halo_log_event sunrise_event = {
-	// It's not important, but the category here is wrong. I don't know what it should be.
-	4, 1, 0
-};
 
-
-// Idk wtf im doing
-typedef LONG
-(WINAPI* p_halo_log_func)(
-	__in    halo_log_event*    thisEvent,
-	__in    char*              message,
-	...
-	); 
-
-p_halo_log_func halo_logger;
-
-#define write_to_halo_logs(f_, ...)                                 \
-{                                                                   \
-    if (halo_logger) {                                              \
-    	halo_logger(&sunrise_event, (f_), ##__VA_ARGS__);           \
-    }                                                               \
-};
-
-void RegisterHaloLogger(DWORD address) {
-	halo_logger = (p_halo_log_func)address;
-}
-
-void RegisterActiveServer(in_addr address, WORD port, const char description[XTITLE_SERVER_MAX_SERVER_INFO_LEN]) {
+void RegisterActiveServer(in_addr address, const char description[XTITLE_SERVER_MAX_SERVER_INFO_LEN]) {
 	activeServer.inaServer.S_un.S_addr = address.S_un.S_addr;
-	activeServerPort = port;
 	memcpy(activeServer.szServerInfo, description, XTITLE_SERVER_MAX_SERVER_INFO_LEN);
 }
 
+void RegisterActiveServerDomain(char* domain, const char description[XTITLE_SERVER_MAX_SERVER_INFO_LEN]) {
+	WSAEVENT event;
+	static struct in_addr addr;
+	static char* addr_ptr = NULL;
+	XNDNS* dns = NULL;
+
+	addr_ptr = (char*)&addr;
+
+	if (!BlamnetDomain) goto error;
+
+	event = WSACreateEvent();
+	XNetDnsLookup(BlamnetDomain, event, &dns);
+	if (!dns) goto error;
+
+	WaitForSingleObject((HANDLE)event, INFINITE);
+	if (dns->iStatus) goto error;
+
+	memcpy(&addr, dns->aina, sizeof(addr));
+
+	WSACloseEvent(event);
+	XNetDnsRelease(dns);
+
+	RegisterActiveServer(addr, description);
+	return;
+
+error:
+	XNotify(L"Failed to register Title Server!");
+}
+
+bool performed_dns_lookup = false;
 int XamEnumerateHook(
 	HANDLE hEnum,
 	DWORD dwFlags,
@@ -123,60 +203,34 @@ int XamEnumerateHook(
 	if (
 		hEnum == lsp_enum_handle
 	) {
-		write_to_halo_logs("networking:sunrise: XamEnumerateHook(%d, %d, %d, %d, %d, %d)", hEnum, dwFlags, pvBuffer, cbBuffer, pcItemsReturned, pOverlapped);
-		write_to_halo_logs("networking:sunrise: XamEnumerateHook with handle %d", hEnum);
-		write_to_halo_logs("networking:sunrise: This is enumeration %d", enumeration_index);
+		if (!performed_dns_lookup) {
+			RegisterHaloServer();
+		}
 
 		if (cbBuffer < sizeof(XTITLE_SERVER_INFO)) {
-			write_to_halo_logs("networking:sunrise: XamEnumerateHook The buffer is too small! %d < %d", cbBuffer, sizeof(XTITLE_SERVER_INFO));
 			return ERROR_INSUFFICIENT_BUFFER;
 		}
 
-		write_to_halo_logs("networking:sunrise: Copying LSP info from %d to buffer %d", &activeServer, pvBuffer);
-		write_to_halo_logs("networking:sunrise: Our server info has IP %d description %s", activeServer.inaServer.S_un.S_addr, activeServer.szServerInfo);
 		memcpy(pvBuffer, &activeServer, sizeof(XTITLE_SERVER_INFO));
 
-		int errorCode = enumeration_index == 0 ? 0 : ERROR_NO_MORE_FILES;
+		int errorCode = lsp_enumeration_index == 0 ? 0 : ERROR_NO_MORE_FILES;
 
-		enumeration_index = 1;
+		lsp_enumeration_index = 1;
 
 		if (pOverlapped) {
-			write_to_halo_logs("networking:sunrise: overlapped with low = %d, high = %d, context = %d, error = %d, event = %d",
-				pOverlapped->InternalLow,
-				pOverlapped->InternalHigh,
-				pOverlapped->InternalContext,
-				pOverlapped->dwExtendedError,
-				pOverlapped->hEvent
-			);
-
 			pOverlapped->InternalLow = errorCode;
 			pOverlapped->InternalHigh = 1;
 			pOverlapped->InternalContext = (ULONG_PTR)GetCurrentThread();
 			pOverlapped->dwExtendedError = 0;
 
-			write_to_halo_logs("networking:sunrise: Set overlapped to low = %d, high = %d, context = %d, error = %d, event = %d",
-				pOverlapped->InternalLow,
-				pOverlapped->InternalHigh,
-				pOverlapped->InternalContext,
-				pOverlapped->dwExtendedError,
-				pOverlapped->hEvent
-			);
-
-
 			if (pOverlapped->hEvent) {
-				write_to_halo_logs("networking:sunrise Resetting event...");
-
 				ResetEvent(pOverlapped->hEvent);
 			}
 
 
 			if (pOverlapped->hEvent) {
-				write_to_halo_logs("networking:sunrise Setting event...");
-
 				SetEvent(pOverlapped->hEvent);
 			}
-
-			write_to_halo_logs("networking:sunrise XamEnumerateHook finished. Hold onto your helmets.");
 
 			return ERROR_IO_PENDING;
 		}
@@ -187,17 +241,57 @@ int XamEnumerateHook(
 	return XamEnumerate(hEnum, dwFlags, pvBuffer, cbBuffer, pcItemsReturned, pOverlapped);
 }
 
-VOID SetupNetDllHooks()
+VOID SetupLoadHooks(PLDR_DATA_TABLE_ENTRY moduleHandle);
+
+NTSTATUS XexLoadExecutableHook(PCHAR Name, PHANDLE Handle, DWORD TypeFlags, DWORD Version) {
+	Sunrise_Print("XexLoadExecutableHook with name %s handle %d", Name, *(DWORD*)Handle);
+	HANDLE Module = 0;
+	NTSTATUS Result = XexLoadExecutable(Name, &Module, TypeFlags, Version);
+	Sunrise_Print("XexLoadExecutable called got handle %d", Name, *(DWORD*)Handle);
+	if (Handle != 0) *Handle = Module;
+	if (NT_SUCCESS(Result)) SetupHaloPatches();
+	SetupLoadHooks((PLDR_DATA_TABLE_ENTRY)Module);
+	return Result;
+}
+
+NTSTATUS XexLoadImageHook(CONST PCHAR Name, DWORD TypeFlags, DWORD Version, PHANDLE Handle) {
+	Sunrise_Print("XexLoadExecutableHook with name %s handle %d", Name, *(DWORD*)Handle);
+
+	HANDLE Module = 0;
+	NTSTATUS Result = XexLoadImage(Name, TypeFlags, Version, &Module);
+	Sunrise_Print("XexLoadImage called got handle %d", Name, *(DWORD*)Handle);
+	if (Handle != 0) *Handle = Module;
+	if (NT_SUCCESS(Result)) SpoofTitleVersion((PLDR_DATA_TABLE_ENTRY)Module);
+	SetupLoadHooks((PLDR_DATA_TABLE_ENTRY)Module);
+	return Result;
+}
+
+VOID SetupLSPHooks()
 {
-	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, "xam.xex", 12, (DWORD)NetDll_connectHook); // connect
-	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, "xam.xex", 3, (DWORD)NetDll_socketHook); // socket
-	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, "xam.xex", 51, (DWORD)NetDll_XNetStartupHook);
-	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, "xam.xex", 58, (DWORD)NetDll_XNetServerToInAddrHook);
-	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, "xam.xex", 63, (DWORD)NetDll_XNetUnregisterInAddrHook);
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 3, (DWORD)NetDll_socketHook);
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 51, (DWORD)NetDll_XNetStartupHook);
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 58, (DWORD)NetDll_XNetServerToInAddrHook);
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 63, (DWORD)NetDll_XNetUnregisterInAddrHook);
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 590, (DWORD)XamCreateEnumeratorHandleHook);
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 592, (DWORD)XamEnumerateHook);
+}
 
-	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, "xam.xex", 590, (DWORD)XamCreateEnumeratorHandleHook);
-	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, "xam.xex", 592, (DWORD)XamEnumerateHook);
+VOID SetupSpoofHooks() {
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 604, (DWORD)XamContentCreateEnumeratorHook);
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 537, (DWORD)XamUserReadProfileSettingsHook);
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 538, (DWORD)XamUserWriteProfileSettingsHook);
+}
 
+VOID SetupLoadHooks(PLDR_DATA_TABLE_ENTRY moduleHandle)
+{
+	if (moduleHandle == nullptr) {
+		PatchModuleImport(MODULE_XAM, MODULE_KERNEL, 0x198, (DWORD)XexLoadExecutableHook);
+		PatchModuleImport(MODULE_XAM, MODULE_KERNEL, 0x199, (DWORD)XexLoadImageHook);
+	}
+	else {
+		PatchModuleImport(moduleHandle, MODULE_KERNEL, 0x198, (DWORD)XexLoadExecutableHook);
+		PatchModuleImport(moduleHandle, MODULE_KERNEL, 0x199, (DWORD)XexLoadImageHook);
+	}
 }
 
 DWORD __stdcall XUserReadStats_hook(DWORD, DWORD, DWORD, DWORD, DWORD, DWORD* pcbResults, DWORD* pResults, void*)
@@ -213,4 +307,27 @@ VOID SetupXUserReadStatsHook(DWORD Address)
 {
 	Sunrise_Dbg("Ignoring true skill");
 	PatchInJump((DWORD*)Address, (DWORD)&XUserReadStats_hook, false);
+}
+
+
+// This hook ensures that the utility drive is formatted every mount.
+// This reduces some issues when switching between halo caches.
+Detour XMountUtilityDriveExDetour;
+DWORD XMountUtilityDriveEx(DWORD dwFlags, DWORD dwBytesPerCluster, SIZE_T dwFileCacheSize)
+{
+	Sunrise_Dbg("XMountUtilityDriveEx Hook called, formatting Utility Drive.");
+	return XMountUtilityDriveExDetour.GetOriginal<decltype(&XMountUtilityDriveEx)>()(
+		0xF,
+		dwBytesPerCluster,
+		dwFileCacheSize
+	);
+}
+
+VOID SetupXMountUtilityDriveExHook(DWORD functionAddress) {
+
+	XMountUtilityDriveExDetour = Detour(
+		reinterpret_cast<decltype(&XMountUtilityDriveEx)>(functionAddress),
+		XMountUtilityDriveEx
+	);
+	XMountUtilityDriveExDetour.Install();
 }
