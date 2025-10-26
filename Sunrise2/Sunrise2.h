@@ -8,6 +8,7 @@ extern BOOL bIsDevkit;
 extern BOOL bAllowRetailPlayers;
 extern BOOL bIgnoreTrueskill;
 extern BOOL bClearCacheOnLaunch;
+extern BOOL bLogEventsToStdout;
 extern char* BlamnetDomain;
 
 VOID SpoofTitleVersion(PLDR_DATA_TABLE_ENTRY moduleTable);
