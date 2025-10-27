@@ -161,6 +161,7 @@ void RegisterActiveServer(in_addr address, const char description[XTITLE_SERVER_
 	memcpy(activeServer.szServerInfo, description, XTITLE_SERVER_MAX_SERVER_INFO_LEN);
 }
 
+bool performed_dns_lookup = false;
 void RegisterActiveServerDomain(char* domain, const char description[XTITLE_SERVER_MAX_SERVER_INFO_LEN]) {
 	WSAEVENT event;
 	static struct in_addr addr;
@@ -186,13 +187,13 @@ void RegisterActiveServerDomain(char* domain, const char description[XTITLE_SERV
 	XNetDnsRelease(dns);
 
 	RegisterActiveServer(addr, description);
+	performed_dns_lookup = true;
 	return;
 
 error:
 	XNotify(L"Failed to register Title Server!");
 }
 
-bool performed_dns_lookup = false;
 int XamEnumerateHook(
 	HANDLE hEnum,
 	DWORD dwFlags,

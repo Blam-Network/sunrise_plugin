@@ -5,6 +5,7 @@
 #include "stdafx.h"
 
 extern BOOL bIsDevkit;
+extern BOOL bDisableXNotify;
 extern BOOL bAllowRetailPlayers;
 extern BOOL bIgnoreTrueskill;
 extern BOOL bClearCacheOnLaunch;

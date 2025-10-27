@@ -18,12 +18,8 @@
 
 const char* SunriseVers = "3.0.1";
 
-const char sunrise_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "required,mass_storage,other,ttl,usr,shr,web,dbg,upl,prs,std,wb2";
+const char blamnet_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "required,mass_storage,other,ttl,usr,shr,web,dbg,upl,prs,std,wb2";
 
-
-HANDLE hXam;
-BOOL bRunContinuous = TRUE;
-BOOL bLoopHasComplete = FALSE;
 BOOL bIsDevkit; // Set on plugin load. Skips doing xnotify on devkits
 DWORD LastTitleId;
 
@@ -51,6 +47,7 @@ BOOL IsHalo(DWORD titleId) {
 }
 
 BOOL bAllowRetailPlayers = TRUE;
+BOOL bDisableXNotify = FALSE;
 BOOL bIgnoreTrueskill = FALSE;
 BOOL bLogEventsToStdout = TRUE;
 BOOL bClearCacheOnLaunch = TRUE;
@@ -586,7 +583,7 @@ VOID RegisterHaloServer()
 	DWORD titleID = XamGetCurrentTitleId();
 
 	if (IsHalo(titleID)) {
-		RegisterActiveServerDomain(BlamnetDomain, sunrise_description);
+		RegisterActiveServerDomain(BlamnetDomain, blamnet_description);
 	}
 }
 
