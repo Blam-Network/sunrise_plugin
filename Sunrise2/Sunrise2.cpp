@@ -16,7 +16,7 @@
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
 
-const char* SunriseVers = "2.2.0";
+const char* SunriseVers = "3.0.0";
 
 in_addr sunrise_ip = { 174, 136, 231, 17 };
 INT sunrise_port = 8000;
