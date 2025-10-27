@@ -228,13 +228,18 @@ VOID SetupHaloPatches() {
 	DWORD TitleID = pExecutionId->TitleID;
 	if (TitleID != LastTitleId)
 	{
+		if (MountPath(MOUNT_POINT, GetMountPath()) != 0)
+		{
+			Sunrise_Dbg("Failed to set mount point!");
+			return;
+		}
+		Readini();
+
 		LastTitleId = TitleID; // Set the last title id  to the current title id so we don't loop rechecking
 
 		XEX_SECTION_INFO* sectionInfo = (XEX_SECTION_INFO*)RtlImageXexHeaderField(PLDR_Xex->XexHeaderBase, XEX_HEADER_SECTION_TABLE);
 
 		Sunrise_Dbg("Loaded title %08X v %d", pExecutionId->TitleID, pExecutionId->Version);
-
-		Readini(); // Read the ini each time Halo is loaded to avoid having to reload the plugin
 
 		if (IsHalo(TitleID)) {
 			SetupLSPHooks();

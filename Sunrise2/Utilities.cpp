@@ -215,11 +215,11 @@ VOID Writeini(BOOL GenerateNew)
 	}
 	else {
 		if (!ini_Sunrise_W.LoadFile(PATH_INI)) {
-			ini_Sunrise_W.SetBoolValue("OPTIONS", "IgnoreTrueskill", bIgnoreTrueskill);
-			ini_Sunrise_W.SetBoolValue("OPTIONS", "AllowRetailPlayers", bAllowRetailPlayers);
-			//ini_Sunrise_W.SetValue("OPTIONS", "BlamnetDomain", BlamnetDomain);
-			ini_Sunrise_W.SetBoolValue("OPTIONS", "ClearCacheOnLaunch", bClearCacheOnLaunch);
-			ini_Sunrise_W.SetBoolValue("OPTIONS", "LogEventsToStdout", bLogEventsToStdout);
+			ini_Sunrise_W.SetBoolValue("HALO_OPTIONS", "IgnoreTrueskill", bIgnoreTrueskill);
+			ini_Sunrise_W.SetBoolValue("HALO_OPTIONS", "AllowRetailPlayers", bAllowRetailPlayers);
+			ini_Sunrise_W.SetValue("HALO_OPTIONS", "BlamnetDomain", BlamnetDomain);
+			ini_Sunrise_W.SetBoolValue("HALO_OPTIONS", "ClearCacheOnLaunch", bClearCacheOnLaunch);
+			ini_Sunrise_W.SetBoolValue("HALO_OPTIONS", "LogEventsToStdout", bLogEventsToStdout);
 		}
 	}
 
@@ -282,13 +282,12 @@ VOID Readini()
 	ini_Sunrise_R.SetSpaces(true);
 	if (!ini_Sunrise_R.LoadFile(PATH_INI)) {
 		
-		bIgnoreTrueskill = ini_Sunrise_R.GetBoolValue("OPTIONS", "IgnoreTrueskill", FALSE);
-		bAllowRetailPlayers = ini_Sunrise_R.GetBoolValue("OPTIONS", "AllowRetailPlayers", TRUE);
-		//strcpy(BlamnetDomain, ini_Sunrise_R.GetValue("OPTIONS", "BlamnetDomain", "xbl.lsp.blam.network"));
-		bClearCacheOnLaunch = ini_Sunrise_R.GetBoolValue("OPTIONS", "ClearCacheOnLaunch", TRUE);
-		bLogEventsToStdout = ini_Sunrise_R.GetBoolValue("OPTIONS", "LogEventsToStdout", TRUE);
+		bIgnoreTrueskill = ini_Sunrise_R.GetBoolValue("HALO_OPTIONS", "IgnoreTrueskill", FALSE);
+		bAllowRetailPlayers = ini_Sunrise_R.GetBoolValue("HALO_OPTIONS", "AllowRetailPlayers", TRUE);
+		strcpy(BlamnetDomain, ini_Sunrise_R.GetValue("HALO_OPTIONS", "BlamnetDomain", "xbl.lsp.blam.network"));
+		bClearCacheOnLaunch = ini_Sunrise_R.GetBoolValue("HALO_OPTIONS", "ClearCacheOnLaunch", TRUE);
+		bLogEventsToStdout = ini_Sunrise_R.GetBoolValue("HALO_OPTIONS", "LogEventsToStdout", TRUE);
 		ini_Sunrise_R.Reset();
-
 
 		Writeini(FALSE); // This should ensure that any entries missing from the clients ini will be added with default value
 	}
