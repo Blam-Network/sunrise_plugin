@@ -16,11 +16,9 @@
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
 
-const char* SunriseVers = "3.0.0";
+const char* SunriseVers = "3.0.1";
 
-in_addr sunrise_ip = { 174, 136, 231, 17 };
-INT sunrise_port = 8000;
-const char sunrise_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "required,mass_storage,other,ttl,usr,shr,web,dbg,upl,prs,std";
+const char sunrise_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "required,mass_storage,other,ttl,usr,shr,web,dbg,upl,prs,std,wb2";
 
 
 HANDLE hXam;

@@ -256,16 +256,15 @@ BOOL RenameSPA(PXEX_SECTION_INFO sectionInfo, DWORD old_value, DWORD new_value, 
 	int resourceCount = (sectionInfo->Size - sizeof(DWORD)) / sizeof(XEX_SECTION_HEADER);
 	QWORD old_name = int_to_hex_qword(old_value);
 	QWORD new_name = int_to_hex_qword(new_value);
-	Sunrise_Print("Renaming resources from %llu to %llu", old_name, new_name);
+	Sunrise_Dbg("Renaming resources from %08X to %08X", old_value, new_value);
 		
 	for (int x = 0; x < resourceCount; x++) {
-		Sunrise_Print("Resource %d is %llu", x, *(QWORD*)sectionInfo->Section[x].SectionName);
+		Sunrise_Dbg("Resource %d is %s", x, sectionInfo->Section[x].SectionName);
 
 		if (*(QWORD*)(sectionInfo->Section[x].SectionName) == old_name) {
-			Sunrise_Print("Renaming...");
+			Sunrise_Dbg("Renaming...");
 			*(QWORD*)sectionInfo->Section[x].SectionName = new_name;
 			*(DWORD*)(sectionInfo->Section[x].VirtualAddress + title_id_offset) = new_value;
-			Sunrise_Print("Done renaming.");
 
 			return true; // renamed successfully
 		}

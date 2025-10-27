@@ -169,10 +169,12 @@ void RegisterActiveServerDomain(char* domain, const char description[XTITLE_SERV
 
 	addr_ptr = (char*)&addr;
 
-	if (!BlamnetDomain) goto error;
+	if (!domain) goto error;
+
+	Sunrise_Dbg("Registering active server %s", domain);
 
 	event = WSACreateEvent();
-	XNetDnsLookup(BlamnetDomain, event, &dns);
+	XNetDnsLookup(domain, event, &dns);
 	if (!dns) goto error;
 
 	WaitForSingleObject((HANDLE)event, INFINITE);
