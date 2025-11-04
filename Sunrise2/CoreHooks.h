@@ -12,5 +12,6 @@ VOID SetupLoadHooks(PLDR_DATA_TABLE_ENTRY moduleHandle);
 VOID SetupXUserReadStatsHook(DWORD Address);
 VOID SetTitleId(DWORD title_id);
 VOID SetupXMountUtilityDriveExHook(DWORD functionAddress);
+VOID ApplyPrivHook();
 
 #endif

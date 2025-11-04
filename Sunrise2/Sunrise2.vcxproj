@@ -39,7 +39,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectName>Sunrise2</ProjectName>
+    <ProjectName>Sunrise3</ProjectName>
     <ProjectGuid>{652C7D60-BC02-4E09-96DD-930012345679}</ProjectGuid>
     <RootNamespace>Sunrise2</RootNamespace>
     <Keyword>Win32Proj</Keyword>
@@ -687,7 +687,7 @@
   <ItemGroup>
     <ClCompile Include="Detour.cpp" />
     <ClCompile Include="HaloHooks.cpp" />
-    <ClCompile Include="Sunrise2.cpp">
+    <ClCompile Include="Sunrise3.cpp">
       <InlineFunctionExpansion Condition="'$(Configuration)|$(Platform)'=='Release_LTCG|Xbox 360'">AnySuitable</InlineFunctionExpansion>
       <InlineFunctionExpansion Condition="'$(Configuration)|$(Platform)'=='Rel-Obf|Xbox 360'">AnySuitable</InlineFunctionExpansion>
       <IntrinsicFunctions Condition="'$(Configuration)|$(Platform)'=='Release_LTCG|Xbox 360'">true</IntrinsicFunctions>
@@ -706,7 +706,7 @@
     <ClInclude Include="Detour.h" />
     <ClInclude Include="HaloHooks.h" />
     <ClInclude Include="SimpleIni.h" />
-    <ClInclude Include="Sunrise2.h" />
+    <ClInclude Include="Sunrise3.h" />
     <ClInclude Include="CoreHooks.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="Utilities.h" />

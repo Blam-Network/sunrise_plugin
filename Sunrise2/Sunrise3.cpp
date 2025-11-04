@@ -1,5 +1,5 @@
 //-----------------------------------------------------------------------------
-//  Sunrise 2.0
+//  Sunrise 3.0
 //
 //  Dev:
 //			Byrom
@@ -16,7 +16,7 @@
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
 
-const char* SunriseVers = "3.0.1";
+const char* SunriseVers = "3.1.0";
 
 const char blamnet_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "required,mass_storage,other,ttl,usr,shr,web,dbg,upl,prs,std,wb2";
 
@@ -51,6 +51,7 @@ BOOL bDisableXNotify = FALSE;
 BOOL bIgnoreTrueskill = FALSE;
 BOOL bLogEventsToStdout = TRUE;
 BOOL bClearCacheOnLaunch = TRUE;
+BOOL bEnableDevkitSockpatch = FALSE;
 char* BlamnetDomain = "xbl.lsp.blam.network";
 
 DWORD Halo3_Retail_XUserReadStats_Addr = 0x825B6358;
@@ -145,7 +146,8 @@ VOID SpoofTitleVersion(PLDR_DATA_TABLE_ENTRY moduleTable) {
 	}
 	else if (TitleID == HaloReach) {
 		switch (PLDR_HaloXex->TimeDateStamp) {
-			case 0x4E559FF8: //reach tu
+			case 0x4E559FF8: // reach tu1
+			case 0x4C4AAE66: // reach tu0
 				break;
 			default: {
 				pExecutionId->TitleID = HaloReach;
@@ -229,6 +231,7 @@ VOID SetupHaloPatches() {
 			return;
 		}
 		Readini();
+		ApplyPrivHook();
 
 		LastTitleId = TitleID; // Set the last title id  to the current title id so we don't loop rechecking
 
@@ -456,7 +459,7 @@ VOID SetupHaloPatches() {
 		{
 			switch (PLDR_Xex->TimeDateStamp)
 			{
-			case 0x4C4AAE66: // tu0?
+			case 0x4C4AAE66: // tu0
 			{
 				Sunrise_Dbg("Halo: Reach detected! Initialising hooks...");
 

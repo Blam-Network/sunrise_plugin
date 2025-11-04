@@ -1,5 +1,5 @@
 #include "stdafx.h"
-#include "Sunrise2.h"
+#include "Sunrise3.h"
 #include "Utilities.h"
 #include "Detour.h"
 
@@ -264,7 +264,7 @@ NTSTATUS XexLoadImageHook(CONST PCHAR Name, DWORD TypeFlags, DWORD Version, PHAN
 	NTSTATUS Result = XexLoadImage(Name, TypeFlags, Version, &Module);
 	Sunrise_Print("XexLoadImage called got handle %d", Name, *(DWORD*)Handle);
 	if (Handle != 0) *Handle = Module;
-	if (NT_SUCCESS(Result)) SpoofTitleVersion((PLDR_DATA_TABLE_ENTRY)Module);
+	if (NT_SUCCESS(Result)) SetupHaloPatches();
 	SetupLoadHooks((PLDR_DATA_TABLE_ENTRY)Module);
 	return Result;
 }
@@ -333,4 +333,43 @@ VOID SetupXMountUtilityDriveExHook(DWORD functionAddress) {
 		XMountUtilityDriveEx
 	);
 	XMountUtilityDriveExDetour.Install();
+}
+
+// Quick fix to always allow insecure sockets on devkit. Works for retail kernel too but this will do for now.
+#define INSECURE_SOCK_PRIV    6
+BOOL XexCheckExecutablePrivilegeHook(DWORD priv)
+{
+	// Allow insecure sockets for all titles
+	if (priv == INSECURE_SOCK_PRIV)
+		return TRUE;
+
+	return XexCheckExecutablePrivilege(priv);
+}
+
+VOID ApplyPrivHook()
+{
+	if (!bEnableDevkitSockpatch)
+		return;
+
+	if (!bIsDevkit)
+		return;
+
+	// This will break if a dash update is released.
+	if (*(QWORD*)0x81D0F3CC == 0x3d60800a396bff90) // Quick check to make sure it hasn't already been hooked. Some stealths already do this
+	{
+		Sunrise_Dbg("Applying executable priv hook!");
+		if (PatchModuleImport("xam.xex", "xboxkrnl.exe", 404, (DWORD)XexCheckExecutablePrivilegeHook) != S_OK)
+			Sunrise_Dbg("Failed to apply executable priv hook! (insecure sockets)");
+	}
+}
+
+VOID RemovePrivHook()
+{
+	if (!bIsDevkit)
+		return;
+
+	Sunrise_Dbg("Removing executable priv hook!");
+	// This will break if a dash update is released.
+	*(QWORD*)0x81D0F3CC = 0x3d60800a396bff90;
+	*(QWORD*)(0x81D0F3CC + 8) = 0x7d6903a64e800420;
 }

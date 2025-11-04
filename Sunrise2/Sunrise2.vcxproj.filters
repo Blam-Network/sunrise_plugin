@@ -4,7 +4,7 @@
     <None Include="xex.xml" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Sunrise2.cpp" />
+    <ClCompile Include="Sunrise3.cpp" />
     <ClCompile Include="stdafx.cpp" />
     <ClCompile Include="Utilities.cpp" />
     <ClCompile Include="CoreHooks.cpp" />
@@ -14,7 +14,7 @@
   <ItemGroup>
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="Utilities.h" />
-    <ClInclude Include="Sunrise2.h" />
+    <ClInclude Include="Sunrise3.h" />
     <ClInclude Include="CoreHooks.h" />
     <ClInclude Include="SimpleIni.h" />
     <ClInclude Include="Detour.h" />

@@ -25,15 +25,15 @@ VOID Sunrise_Print(const CHAR* fmt, ...);
 #define DO_PRINTS // Comment out to disable prints
 
 #ifdef DO_PRINTS
-#define Sunrise_Dbg(x, ...) { do { Sunrise_Print("[Sunrise2] "  x "\n", __VA_ARGS__); } while(0); }
+#define Sunrise_Dbg(x, ...) { do { Sunrise_Print("[Sunrise3] "  x "\n", __VA_ARGS__); } while(0); }
 #else
 #define Sunrise_Dbg
 #endif
 
-#pragma region Sunrise2 ini
+#pragma region Sunrise3 ini
 #define BASE_ADDR 0x91A00000
-#define MOUNT_POINT	 "SR2:"
-#define PATH_INI	MOUNT_POINT "\\Sunrise2.ini"
+#define MOUNT_POINT	 "SR3:"
+#define PATH_INI	MOUNT_POINT "\\Sunrise3.ini"
 
 VOID Writeini(BOOL GenerateNew);
 VOID Readini();
