@@ -16,7 +16,7 @@
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
 
-const char* SunriseVers = "3.1.0";
+const char* SunriseVers = "3.2.0";
 
 const char blamnet_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "required,mass_storage,other,ttl,usr,shr,web,dbg,upl,prs,std,wb2";
 
@@ -149,6 +149,30 @@ VOID SpoofTitleVersion(PLDR_DATA_TABLE_ENTRY moduleTable) {
 			case 0x4E559FF8: // reach tu1
 			case 0x4C4AAE66: // reach tu0
 				break;
+			case 0x4B7F307A: {
+				SetTitleId(HaloReachBeta);
+				pExecutionId->TitleID = HaloReach;
+				pExecutionId->Version = 257;
+				RenameSPA(sectionInfo, TitleID, HaloReach, 0x1F6);
+			}
+			case 0x4BABF021: {
+				SetTitleId(HaloReachBeta);
+				pExecutionId->TitleID = HaloReach;
+				pExecutionId->Version = 257;
+				RenameSPA(sectionInfo, TitleID, HaloReach, 0x1F6);
+			}
+			case 0x4BBC0DF7: {
+				SetTitleId(HaloReachBeta);
+				pExecutionId->TitleID = HaloReach;
+				pExecutionId->Version = 257;
+				RenameSPA(sectionInfo, TitleID, HaloReach, 0x1F6);
+			}
+			case 0x4BBF8F02: {
+				SetTitleId(HaloReachBeta);
+				pExecutionId->TitleID = HaloReach;
+				pExecutionId->Version = 257;
+				RenameSPA(sectionInfo, TitleID, HaloReach, 0x1F6);
+			}
 			default: {
 				pExecutionId->TitleID = HaloReach;
 				pExecutionId->Version = 257;

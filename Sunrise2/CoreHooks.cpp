@@ -79,7 +79,7 @@ DWORD XamContentCreateEnumeratorHook(
 	DWORD current_title_id = XamGetCurrentTitleId();
 	Sunrise_Dbg("XamContentCreateEnumeratorHook for content type %d", dwContentType);
 	Sunrise_Dbg("title_id_real = %08X", title_id_real);
-	Sunrise_Dbg("current_title_id = %08X", title_id_real);
+	Sunrise_Dbg("current_title_id = %08X", current_title_id);
 
 	// If we're title spoofing, dont try to load DLC.
 	if (current_title_id != title_id_real && dwContentType == XCONTENTTYPE_MARKETPLACE) {
