@@ -10,6 +10,9 @@
     <ClCompile Include="CoreHooks.cpp" />
     <ClCompile Include="Detour.cpp" />
     <ClCompile Include="HaloHooks.cpp" />
+    <ClCompile Include="DebugMenu.cpp" />
+    <ClCompile Include="DebugMenuItem.cpp" />
+    <ClCompile Include="Halo3DebugMenu.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h" />
@@ -19,5 +22,8 @@
     <ClInclude Include="SimpleIni.h" />
     <ClInclude Include="Detour.h" />
     <ClInclude Include="HaloHooks.h" />
+    <ClInclude Include="DebugMenu.h" />
+    <ClInclude Include="DebugMenuItem.h" />
+    <ClInclude Include="Halo3DebugMenu.h" />
   </ItemGroup>
 </Project>

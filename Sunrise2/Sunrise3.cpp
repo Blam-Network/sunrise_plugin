@@ -15,6 +15,7 @@
 #include "Detour.h"
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
+#include "Halo3DebugMenu.h"
 
 const char* SunriseVers = "3.1.1";
 
@@ -284,6 +285,9 @@ VOID SetupHaloPatches() {
 
 				if (bClearCacheOnLaunch)
 					SetupXMountUtilityDriveExHook(0x825982F8);
+
+				// Setup debug menu hooks
+				SetupHalo3DebugMenuHooks_TU2(0x82132d18, 0x82090320);
 
 				XNotify(L"Halo Sunrise Initialized!");
 				break;

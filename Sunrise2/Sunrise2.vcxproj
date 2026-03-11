@@ -685,7 +685,10 @@
     <None Include="xex.xml" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="DebugMenu.cpp" />
+    <ClCompile Include="DebugMenuItem.cpp" />
     <ClCompile Include="Detour.cpp" />
+    <ClCompile Include="Halo3DebugMenu.cpp" />
     <ClCompile Include="HaloHooks.cpp" />
     <ClCompile Include="Sunrise3.cpp">
       <InlineFunctionExpansion Condition="'$(Configuration)|$(Platform)'=='Release_LTCG|Xbox 360'">AnySuitable</InlineFunctionExpansion>
@@ -703,7 +706,10 @@
     <ClCompile Include="Utilities.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="DebugMenu.h" />
+    <ClInclude Include="DebugMenuItem.h" />
     <ClInclude Include="Detour.h" />
+    <ClInclude Include="Halo3DebugMenu.h" />
     <ClInclude Include="HaloHooks.h" />
     <ClInclude Include="SimpleIni.h" />
     <ClInclude Include="Sunrise3.h" />
