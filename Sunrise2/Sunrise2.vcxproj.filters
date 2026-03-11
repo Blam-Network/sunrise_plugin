@@ -10,8 +10,15 @@
     <ClCompile Include="CoreHooks.cpp" />
     <ClCompile Include="Detour.cpp" />
     <ClCompile Include="HaloHooks.cpp" />
-    <ClCompile Include="DebugMenu.cpp" />
-    <ClCompile Include="DebugMenuItem.cpp" />
+    <ClCompile Include="debug_menu.cpp" />
+    <ClCompile Include="debug_menu_item.cpp" />
+    <ClCompile Include="debug_menu_item_numbered.cpp" />
+    <ClCompile Include="debug_menu_item_type.cpp" />
+    <ClCompile Include="debug_menu_item_hs_command.cpp" />
+    <ClCompile Include="debug_menu_main.cpp" />
+    <ClCompile Include="debug_menu_scroll.cpp" />
+    <ClCompile Include="debug_menu_parse.cpp" />
+    <ClCompile Include="debug_menu_zone_sets.cpp" />
     <ClCompile Include="Halo3DebugMenu.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -22,8 +29,16 @@
     <ClInclude Include="SimpleIni.h" />
     <ClInclude Include="Detour.h" />
     <ClInclude Include="HaloHooks.h" />
-    <ClInclude Include="DebugMenu.h" />
-    <ClInclude Include="DebugMenuItem.h" />
+    <ClInclude Include="debug_menu.h" />
+    <ClInclude Include="debug_menu_item.h" />
+    <ClInclude Include="debug_menu_item_numbered.h" />
+    <ClInclude Include="debug_menu_item_type.h" />
+    <ClInclude Include="debug_menu_item_hs_command.h" />
+    <ClInclude Include="debug_menu_main.h" />
+    <ClInclude Include="debug_menu_scroll.h" />
+    <ClInclude Include="debug_menu_parse.h" />
+    <ClInclude Include="debug_menu_zone_sets.h" />
+    <ClInclude Include="debug_menu_value_hs_global_external.h" />
     <ClInclude Include="Halo3DebugMenu.h" />
   </ItemGroup>
 </Project>

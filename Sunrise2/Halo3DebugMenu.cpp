@@ -1,159 +1,161 @@
 #include "stdafx.h"
 #include "Halo3DebugMenu.h"
-#include "DebugMenu.h"
-#include "DebugMenuItem.h"
+#include "debug_menu_main.h"
+#include "debug_menu.h"
 #include "Detour.h"
 #include "Utilities.h"
 
-// Detours for render and update hooks
-static Detour MainRenderDetour;
-static Detour InputUpdateDetour;
+// Xbox 360: Detour hooks
+Detour* g_DebugMenuInputUpdateDetour = NULL;
+Detour* g_DebugMenuMainRenderDetour = NULL;
 
-// Hook for main_render - this is where we'll draw the debug menu
+// Original function pointers
+typedef void (*input_update_t)();
 typedef void (*main_render_t)();
-static void main_render_hook() {
-	MainRenderDetour.GetOriginal<main_render_t>()();
+
+input_update_t original_input_update = NULL;
+main_render_t original_main_render = NULL;
+
+// Hook implementations
+void Hooked_InputUpdate()
+{
+	// Call original input update
+	if (original_input_update)
+		original_input_update();
 	
+	// Update debug menu (handles input and state)
+	debug_menu_update();
+}
+
+void Hooked_MainRender()
+{
+	// Call original render
+	if (original_main_render)
+		original_main_render();
+	
+	// Render debug menu overlays
+	render_debug_debug_menu_game();
 	render_debug_debug_menu();
 }
 
-// Hook for input_update - this is where we'll process menu input
-typedef void (*input_update_t)();
-static void input_update_hook() {
-	debug_menu_update();
+void Halo3DebugMenu_SetupFunctionPointers()
+{
+	// Xbox 360: Set up function pointers for game functions using addresses found via IDA
 	
-	InputUpdateDetour.GetOriginal<input_update_t>()();
+	// Rendering functions
+	rasterizer_quad_screenspace = (rasterizer_quad_screenspace_t)HALO3_RASTERIZER_QUAD_SCREENSPACE_ADDR;
+	
+	// System functions - use actual game addresses
+	if (HALO3_INTERFACE_GET_DISPLAY_SETTINGS_ADDR != 0)
+	{
+		interface_get_current_display_settings = (interface_get_current_display_settings_t)HALO3_INTERFACE_GET_DISPLAY_SETTINGS_ADDR;
+		Sunrise_Dbg("Halo3DebugMenu: interface_get_current_display_settings = 0x%08X", HALO3_INTERFACE_GET_DISPLAY_SETTINGS_ADDR);
+	}
+	
+	if (HALO3_REAL_ARGB_COLOR_TO_PIXEL32_ADDR != 0)
+	{
+		real_argb_color_to_pixel32 = (real_argb_color_to_pixel32_t)HALO3_REAL_ARGB_COLOR_TO_PIXEL32_ADDR;
+		Sunrise_Dbg("Halo3DebugMenu: real_argb_color_to_pixel32 = 0x%08X", HALO3_REAL_ARGB_COLOR_TO_PIXEL32_ADDR);
+	}
+	
+	// Stub implementations for missing functions
+	if (!draw_string_get_glyph_scaling_for_display_settings)
+	{
+		// Default scaling - function may be inlined in retail build
+		draw_string_get_glyph_scaling_for_display_settings = []() -> FLOAT { return 1.0f; };
+		Sunrise_Dbg("Halo3DebugMenu: draw_string_get_glyph_scaling_for_display_settings = STUB (1.0f)");
+	}
+	
+	if (!system_milliseconds)
+	{
+		// Use Xbox kernel function GetTickCount
+		system_milliseconds = []() -> DWORD { return GetTickCount(); };
+		Sunrise_Dbg("Halo3DebugMenu: system_milliseconds = STUB (GetTickCount)");
+	}
+	
+	Sunrise_Dbg("Halo3DebugMenu: Function pointers configured successfully");
 }
 
-// Create the debug menu structure for Halo 3
-void CreateHalo3DebugMenus()
+void Halo3DebugMenu_SetupUpdateHooks()
 {
+	// Hook into Halo 3's input_update function for debug menu updates
+	if (HALO3_INPUT_UPDATE_HOOK_ADDR != 0)
+	{
+		g_DebugMenuInputUpdateDetour = new Detour();
+		g_DebugMenuInputUpdateDetour->SetupDetour((DWORD)HALO3_INPUT_UPDATE_HOOK_ADDR, (DWORD)Hooked_InputUpdate);
+		g_DebugMenuInputUpdateDetour->InstallDetour();
+		original_input_update = (input_update_t)g_DebugMenuInputUpdateDetour->GetOriginalAddress();
+		
+		Sunrise_Dbg("Halo3DebugMenu: Input update hook installed at 0x%08X", HALO3_INPUT_UPDATE_HOOK_ADDR);
+	}
+	else
+	{
+		Sunrise_Dbg("Halo3DebugMenu: WARNING - Input update hook address not configured!");
+	}
+}
+
+void Halo3DebugMenu_SetupRenderHooks()
+{
+	// Hook into Halo 3's main_render function for debug menu rendering
+	if (HALO3_MAIN_RENDER_HOOK_ADDR != 0)
+	{
+		g_DebugMenuMainRenderDetour = new Detour();
+		g_DebugMenuMainRenderDetour->SetupDetour((DWORD)HALO3_MAIN_RENDER_HOOK_ADDR, (DWORD)Hooked_MainRender);
+		g_DebugMenuMainRenderDetour->InstallDetour();
+		original_main_render = (main_render_t)g_DebugMenuMainRenderDetour->GetOriginalAddress();
+		
+		Sunrise_Dbg("Halo3DebugMenu: Main render hook installed at 0x%08X", HALO3_MAIN_RENDER_HOOK_ADDR);
+	}
+	else
+	{
+		Sunrise_Dbg("Halo3DebugMenu: WARNING - Main render hook address not configured!");
+	}
+}
+
+void Halo3DebugMenu_Initialize()
+{
+	Sunrise_Dbg("Halo3DebugMenu: Initializing ManagedDonkey debug menu for Halo 3 TU2...");
+	
+	// Setup function pointers first
+	Halo3DebugMenu_SetupFunctionPointers();
+	
+	// Initialize debug menu system
+	debug_menu_initialize();
 	debug_menu_initialize_for_new_map();
 	
-	c_debug_menu* root = debug_menu_get_root();
-	if (!root)
-	{
-		Sunrise_Dbg("Failed to get root menu!");
-		return;
-	}
+	// Setup hooks
+	Halo3DebugMenu_SetupUpdateHooks();
+	Halo3DebugMenu_SetupRenderHooks();
 	
-	root->set_caption("Press Back+Start to toggle menu");
-	
-	// Create Player submenu
-	c_debug_menu* player_menu = DEBUG_MENU_MALLOC(c_debug_menu, root, "Player");
-	player_menu->set_caption("Player controls and cheats");
-	
-	c_debug_menu_item* player_item1 = DEBUG_MENU_MALLOC(c_debug_menu_item, player_menu, "Give All Weapons", nullptr, true);
-	player_menu->add_item(player_item1);
-	
-	c_debug_menu_item* player_item2 = DEBUG_MENU_MALLOC(c_debug_menu_item, player_menu, "Full Ammo", nullptr, true);
-	player_menu->add_item(player_item2);
-	
-	c_debug_menu_item* player_item3 = DEBUG_MENU_MALLOC(c_debug_menu_item, player_menu, "Teleport to Start", nullptr, true);
-	player_menu->add_item(player_item3);
-	
-	c_debug_menu_item* player_item4 = DEBUG_MENU_MALLOC(c_debug_menu_item, player_menu, "Invincibility", nullptr, true);
-	player_menu->add_item(player_item4);
-	
-	c_debug_menu_item* player_item5 = DEBUG_MENU_MALLOC(c_debug_menu_item, player_menu, "Infinite Ammo", nullptr, true);
-	player_menu->add_item(player_item5);
-	
-	c_debug_menu_item* player_submenu_item = DEBUG_MENU_MALLOC(c_debug_menu_item, root, "Player", player_menu, true);
-	root->add_item(player_submenu_item);
-	
-	// Create Spawning submenu
-	c_debug_menu* spawn_menu = DEBUG_MENU_MALLOC(c_debug_menu, root, "Spawning");
-	spawn_menu->set_caption("Spawn vehicles and objects");
-	
-	c_debug_menu_item* spawn_item1 = DEBUG_MENU_MALLOC(c_debug_menu_item, spawn_menu, "Spawn Warthog", nullptr, true);
-	spawn_menu->add_item(spawn_item1);
-	
-	c_debug_menu_item* spawn_item2 = DEBUG_MENU_MALLOC(c_debug_menu_item, spawn_menu, "Spawn Mongoose", nullptr, true);
-	spawn_menu->add_item(spawn_item2);
-	
-	c_debug_menu_item* spawn_item3 = DEBUG_MENU_MALLOC(c_debug_menu_item, spawn_menu, "Spawn Ghost", nullptr, true);
-	spawn_menu->add_item(spawn_item3);
-	
-	c_debug_menu_item* spawn_item4 = DEBUG_MENU_MALLOC(c_debug_menu_item, spawn_menu, "Spawn Banshee", nullptr, true);
-	spawn_menu->add_item(spawn_item4);
-	
-	c_debug_menu_item* spawn_submenu_item = DEBUG_MENU_MALLOC(c_debug_menu_item, root, "Spawning", spawn_menu, true);
-	root->add_item(spawn_submenu_item);
-	
-	// Create Game submenu
-	c_debug_menu* game_menu = DEBUG_MENU_MALLOC(c_debug_menu, root, "Game");
-	game_menu->set_caption("Game settings and options");
-	
-	c_debug_menu_item* game_item1 = DEBUG_MENU_MALLOC(c_debug_menu_item, game_menu, "Show FPS", nullptr, true);
-	game_menu->add_item(game_item1);
-	
-	c_debug_menu_item* game_item2 = DEBUG_MENU_MALLOC(c_debug_menu_item, game_menu, "Show Coordinates", nullptr, true);
-	game_menu->add_item(game_item2);
-	
-	c_debug_menu_item* game_submenu_item = DEBUG_MENU_MALLOC(c_debug_menu_item, root, "Game", game_menu, true);
-	root->add_item(game_submenu_item);
-	
-	// Create Graphics submenu
-	c_debug_menu* graphics_menu = DEBUG_MENU_MALLOC(c_debug_menu, root, "Graphics");
-	graphics_menu->set_caption("Visual and rendering options");
-	
-	c_debug_menu_item* graphics_item1 = DEBUG_MENU_MALLOC(c_debug_menu_item, graphics_menu, "Show Hitboxes", nullptr, true);
-	graphics_menu->add_item(graphics_item1);
-	
-	c_debug_menu_item* graphics_item2 = DEBUG_MENU_MALLOC(c_debug_menu_item, graphics_menu, "Wireframe Mode", nullptr, true);
-	graphics_menu->add_item(graphics_item2);
-	
-	c_debug_menu_item* graphics_submenu_item = DEBUG_MENU_MALLOC(c_debug_menu_item, root, "Graphics", graphics_menu, true);
-	root->add_item(graphics_submenu_item);
-	
-	// Create AI submenu
-	c_debug_menu* ai_menu = DEBUG_MENU_MALLOC(c_debug_menu, root, "AI");
-	ai_menu->set_caption("AI debugging and controls");
-	
-	c_debug_menu_item* ai_item1 = DEBUG_MENU_MALLOC(c_debug_menu_item, ai_menu, "Freeze AI", nullptr, true);
-	ai_menu->add_item(ai_item1);
-	
-	c_debug_menu_item* ai_item2 = DEBUG_MENU_MALLOC(c_debug_menu_item, ai_menu, "AI Debug Info", nullptr, true);
-	ai_menu->add_item(ai_item2);
-	
-	c_debug_menu_item* ai_submenu_item = DEBUG_MENU_MALLOC(c_debug_menu_item, root, "AI", ai_menu, true);
-	root->add_item(ai_submenu_item);
-	
-	Sunrise_Dbg("Halo 3 debug menus created successfully");
+	Sunrise_Dbg("Halo3DebugMenu: Initialization complete!");
+	Sunrise_Dbg("Halo3DebugMenu: Press Back+Start to toggle debug menu");
 }
 
-// Setup hooks for Halo 3 TU2
-VOID SetupHalo3DebugMenuHooks_TU2(DWORD render_addr, DWORD update_addr) {
-	Sunrise_Dbg("Setting up Halo 3 TU2 debug menu hooks...");
+// Cleanup function (call when plugin unloads)
+void Halo3DebugMenu_Cleanup()
+{
+	Sunrise_Dbg("Halo3DebugMenu: Cleaning up...");
 	
-	// Create the debug menus
-	CreateHalo3DebugMenus();
-	
-	// Hook main_render at 0x82132d18
-	if (render_addr != 0) {
-		MainRenderDetour = Detour(
-			reinterpret_cast<void*>(render_addr),
-			main_render_hook
-		);
-		if (MainRenderDetour.Install()) {
-			Sunrise_Dbg("main_render hook installed at 0x%08X", render_addr);
-		} else {
-			Sunrise_Dbg("Failed to install main_render hook!");
-		}
+	// Remove hooks
+	if (g_DebugMenuInputUpdateDetour)
+	{
+		g_DebugMenuInputUpdateDetour->UninstallDetour();
+		delete g_DebugMenuInputUpdateDetour;
+		g_DebugMenuInputUpdateDetour = NULL;
+		Sunrise_Dbg("Halo3DebugMenu: Input update hook removed");
 	}
 	
-	// Hook input_update at 0x82090320
-	if (update_addr != 0) {
-		InputUpdateDetour = Detour(
-			reinterpret_cast<void*>(update_addr),
-			input_update_hook
-		);
-		if (InputUpdateDetour.Install()) {
-			Sunrise_Dbg("input_update hook installed at 0x%08X", update_addr);
-		} else {
-			Sunrise_Dbg("Failed to install input_update hook!");
-		}
+	if (g_DebugMenuMainRenderDetour)
+	{
+		g_DebugMenuMainRenderDetour->UninstallDetour();
+		delete g_DebugMenuMainRenderDetour;
+		g_DebugMenuMainRenderDetour = NULL;
+		Sunrise_Dbg("Halo3DebugMenu: Main render hook removed");
 	}
 	
-	Sunrise_Dbg("Halo 3 TU2 debug menu hooks setup complete");
+	// Dispose debug menu
+	debug_menu_dispose_from_old_map();
+	debug_menu_dispose();
+	
+	Sunrise_Dbg("Halo3DebugMenu: Cleanup complete");
 }
