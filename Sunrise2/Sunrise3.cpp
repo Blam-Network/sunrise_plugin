@@ -15,6 +15,7 @@
 #include "Detour.h"
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
+#include "PacketCapture.h"
 
 const char* SunriseVers = "3.1.1";
 
@@ -257,6 +258,10 @@ VOID SetupHaloPatches() {
 		Readini();
 		ApplyPrivHook();
 
+		// Stop Destiny capture when leaving Destiny titles.
+		if (IsPacketCaptureActive() && TitleID != Destiny && TitleID != DestinyPreRelease)
+			StopPacketCapture();
+
 		LastTitleId = TitleID; // Set the last title id  to the current title id so we don't loop rechecking
 
 		XEX_SECTION_INFO* sectionInfo = (XEX_SECTION_INFO*)RtlImageXexHeaderField(PLDR_Xex->XexHeaderBase, XEX_HEADER_SECTION_TABLE);
@@ -445,6 +450,12 @@ VOID SetupHaloPatches() {
 			}
 			}
 		}
+		else if (TitleID == Destiny)
+		{
+			Sunrise_Dbg("Destiny detected! Starting packet capture...");
+			StartPacketCapture();
+			XNotify(L"Destiny Sunrise Initialized!");
+		}
 		else if (TitleID == DestinyPreRelease) // d1a
 		{
 			switch (PLDR_Xex->TimeDateStamp)
@@ -454,6 +465,7 @@ VOID SetupHaloPatches() {
 					Sunrise_Dbg("Destiny 1 pre-alpha loaed. I hope you know what youre doing!");
 
 					SpoofTitleVersion(PLDR_Xex);
+					StartPacketCapture();
 
 					XNotify(L"Destiny Sunrise Initialized!");
 				}
@@ -637,6 +649,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserve
 	case DLL_THREAD_DETACH:
 		break;
 	case DLL_PROCESS_DETACH:
+		StopPacketCapture();
 		Sunrise_Dbg("Unloaded!");
 		break;
 
