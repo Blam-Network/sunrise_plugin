@@ -192,6 +192,7 @@ VOID SpoofTitleVersion(PLDR_DATA_TABLE_ENTRY moduleTable) {
 	else if (TitleID == DestinyPreRelease) {
 		Sunrise_Dbg("Destiny Pre Release detected! Spoofing...");
 
+		SetTitleId(DestinyPreRelease);
 		pExecutionId->TitleID = Destiny;
 		pExecutionId->Version = 23; // guessed
 		RenameSPA(sectionInfo, TitleID, Destiny, 0x160);
@@ -465,6 +466,19 @@ VOID SetupHaloPatches() {
 					Sunrise_Dbg("Destiny 1 pre-alpha loaed. I hope you know what youre doing!");
 
 					SpoofTitleVersion(PLDR_Xex);
+					SetupSpoofHooks();
+
+					// Enable debug logs.
+					*((DWORD*)(0x825E0E44)) = 0x38A00001; // li r5, 1
+
+					// Skip password
+					*((DWORD*)(0x825E1038)) = 0x48000108; // b 0x825E1140
+
+					// Force cache0:\\ reports path available
+					*((DWORD*)(0x8280B720)) = 0x60000000;
+					*((DWORD*)(0x8280C040)) = 0x60000000;
+					*((DWORD*)(0x8280BF58)) = 0x480000C8;
+
 					StartPacketCapture();
 
 					XNotify(L"Destiny Sunrise Initialized!");
