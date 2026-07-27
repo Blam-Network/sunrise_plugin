@@ -467,6 +467,7 @@ VOID SetupHaloPatches() {
 
 					SpoofTitleVersion(PLDR_Xex);
 					SetupSpoofHooks();
+					SetupXHttpHooks();
 
 					// Enable debug logs.
 					*((DWORD*)(0x825E0E44)) = 0x38A00001; // li r5, 1

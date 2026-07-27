@@ -285,6 +285,61 @@ VOID SetupSpoofHooks() {
 	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 538, (DWORD)XamUserWriteProfileSettingsHook);
 }
 
+#ifndef HINTERNET
+typedef PVOID HINTERNET;
+#endif
+
+#define XHTTP_FLAG_SECURE 0x00800000
+
+typedef HINTERNET (NTAPI *NetDll_XHttpConnect_t)(
+	XNCALLER_TYPE xnc,
+	HINTERNET hSession,
+	const CHAR* serverName,
+	WORD port,
+	DWORD flags
+);
+
+static NetDll_XHttpConnect_t g_XHttpConnect = NULL;
+
+HINTERNET NetDll_XHttpConnectHook(
+	XNCALLER_TYPE xnc,
+	HINTERNET hSession,
+	const CHAR* serverName,
+	WORD port,
+	DWORD flags
+) {
+	WORD redirectPort = port;
+	DWORD redirectFlags = flags & ~XHTTP_FLAG_SECURE;
+
+	if (redirectPort == 443)
+		redirectPort = 80;
+
+	Sunrise_Dbg("XHttpConnect(%s:%u flags=%08X) -> %s:%u flags=%08X",
+		serverName ? serverName : "(null)", port, flags,
+		BlamnetDomain, redirectPort, redirectFlags);
+
+	return g_XHttpConnect(xnc, hSession, BlamnetDomain, redirectPort, redirectFlags);
+}
+
+VOID SetupXHttpHooks()
+{
+	if (!g_XHttpConnect) {
+		g_XHttpConnect = (NetDll_XHttpConnect_t)ResolveFunction(MODULE_XAM, 205);
+		if (!g_XHttpConnect) {
+			Sunrise_Dbg("Failed to resolve NetDll_XHttpConnect");
+			return;
+		}
+	}
+
+	PatchModuleImport(
+		(PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle,
+		MODULE_XAM,
+		205,
+		(DWORD)NetDll_XHttpConnectHook
+	);
+	Sunrise_Dbg("XHttpConnect hook installed -> %s", BlamnetDomain);
+}
+
 VOID SetupLoadHooks(PLDR_DATA_TABLE_ENTRY moduleHandle)
 {
 	if (moduleHandle == nullptr) {
