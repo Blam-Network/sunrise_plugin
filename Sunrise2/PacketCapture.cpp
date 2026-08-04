@@ -153,6 +153,13 @@ BOOL IsPacketCaptureActive()
 	return g_capturing;
 }
 
+DWORD GetPacketCaptureElapsedMs()
+{
+	if (!g_capturing)
+		return 0;
+	return GetTickCount() - g_capStartTick;
+}
+
 VOID StopPacketCapture()
 {
 	if (!g_capturing && g_capFile == INVALID_HANDLE_VALUE)

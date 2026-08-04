@@ -17,6 +17,7 @@
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
 #include "PacketCapture.h"
+#include "BapKeyDump.h"
 
 const char* SunriseVers = "3.1.2";
 
@@ -64,7 +65,9 @@ BOOL bIgnoreTrueskill = FALSE;
 BOOL bLogEventsToStdout = TRUE;
 BOOL bClearCacheOnLaunch = TRUE;
 BOOL bEnableDevkitSockpatch = FALSE;
-char* BlamnetDomain = "xbl.lsp.blam.network";
+// Writable buffer — Readini strcpy's into this (must not point at a literal).
+char BlamnetDomainBuf[256] = "dev.xbl.lsp.blam.network";
+char* BlamnetDomain = BlamnetDomainBuf;
 
 DWORD Halo3_Retail_XUserReadStats_Addr = 0x825B6358;
 DWORD Halo3_Epsilon_XUserReadStats_Addr = 0x826E77E8;
@@ -273,7 +276,9 @@ VOID SetupHaloPatches() {
 		// Stop Destiny capture / key dump when leaving Destiny retail.
 		if (TitleID != Destiny) {
 			if (IsPacketCaptureActive())
-			StopPacketCapture();
+				StopPacketCapture();
+			if (IsBapKeyDumpActive())
+				StopBapKeyDump();
 		}
 
 		LastTitleId = TitleID; // Set the last title id  to the current title id so we don't loop rechecking
@@ -480,7 +485,7 @@ VOID SetupHaloPatches() {
 			{
 				Sunrise_Dbg("Unrecognized Destiny xex! TimeDateStamp: 0x%X — trying string-scan key dump",
 					PLDR_Xex->TimeDateStamp);
-			XNotify(L"Destiny Sunrise Initialized!");
+				XNotify(L"Destiny Sunrise Initialized!");
 				break;
 			}
 			}
@@ -698,7 +703,12 @@ VOID RegisterBungieServer()
 
 	// After Destiny PreRelease spoof, Xam title id is retail Destiny.
 	if (IsHalo(titleID) || IsDestiny(titleID)) {
+		Sunrise_Dbg("RegisterBungieServer: title %08X domain %s",
+			titleID, BlamnetDomain ? BlamnetDomain : "(null)");
 		RegisterActiveServerDomain(BlamnetDomain, blamnet_description);
+	} else {
+		Sunrise_Dbg("RegisterBungieServer: skip — title %08X not Halo/Destiny",
+			titleID);
 	}
 }
 
@@ -726,6 +736,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserve
 		break;
 	case DLL_PROCESS_DETACH:
 		StopPacketCapture();
+		StopBapKeyDump();
 		Sunrise_Dbg("Unloaded!");
 		break;
 

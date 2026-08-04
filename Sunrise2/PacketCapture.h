@@ -10,5 +10,7 @@
 VOID StartPacketCapture();
 VOID StopPacketCapture();
 BOOL IsPacketCaptureActive();
+// Milliseconds since capture start (same clock as NetCap record timestamps). 0 if idle.
+DWORD GetPacketCaptureElapsedMs();
 
 #endif
