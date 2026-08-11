@@ -1,4 +1,4 @@
-# Halo Sunrise Plugin 2.0
+# Halo Sunrise Plugin 3.0
 
 A Dashlaunch plugin designed to re-enable matchmaking on Xbox 360 Halo 3 by redirecting to custom servers. Based on the work of craftycodie found here: https://github.com/craftycodie/Sunrise-Plugin
 
