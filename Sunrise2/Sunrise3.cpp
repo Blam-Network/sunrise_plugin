@@ -244,8 +244,13 @@ VOID SetupHaloPatches() {
 		Sunrise_Dbg("PLDR_HaloXex was null, weird");
 		return;
 	}
+	
 	XEX_EXECUTION_ID* pExecutionId = (XEX_EXECUTION_ID*)RtlImageXexHeaderField(PLDR_Xex->XexHeaderBase, XEX_HEADER_EXECUTION_ID);
-
+	if (!pExecutionId) {
+		Sunrise_Dbg("pExecutionId was null, exiting loop");
+		return;
+	}
+	
 	DWORD TitleID = pExecutionId->TitleID;
 	if (TitleID != LastTitleId)
 	{
