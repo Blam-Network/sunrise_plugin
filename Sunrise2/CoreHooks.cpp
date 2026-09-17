@@ -20,7 +20,13 @@ int NetDll_XNetStartupHook(XNCALLER_TYPE xnc, XNetStartupParams* xnsp)
 {
 	// For devkits or modded boxes with devkit software.
 	xnsp->cfgFlags |= XNET_STARTUP_BYPASS_SECURITY;
-	return NetDll_XNetStartup(xnc, xnsp);
+	int result = NetDll_XNetStartup(xnc, xnsp);
+	// XNetDnsLookup requires XNet to be up — register Blamnet after every startup.
+	if (result == 0) {
+		Sunrise_Dbg("XNetStartup ok — registering Blamnet server");
+		RegisterBungieServer();
+	}
+	return result;
 }
 
 int NetDll_XNetUnregisterInAddrHook(XNCALLER_TYPE xnc, IN_ADDR address) {
@@ -161,36 +167,85 @@ void RegisterActiveServer(in_addr address, const char description[XTITLE_SERVER_
 	memcpy(activeServer.szServerInfo, description, XTITLE_SERVER_MAX_SERVER_INFO_LEN);
 }
 
-bool performed_dns_lookup = false;
 void RegisterActiveServerDomain(char* domain, const char description[XTITLE_SERVER_MAX_SERVER_INFO_LEN]) {
-	WSAEVENT event;
+	WSAEVENT event = NULL;
 	static struct in_addr addr;
-	static char* addr_ptr = NULL;
 	XNDNS* dns = NULL;
+	DWORD wait = 0;
 
-	addr_ptr = (char*)&addr;
+	if (!domain || !domain[0]) {
+		Sunrise_Dbg("RegisterActiveServerDomain: null/empty domain");
+		goto error;
+	}
 
-	if (!domain) goto error;
+	Sunrise_Dbg("RegisterActiveServerDomain: looking up %s", domain);
 
-	Sunrise_Dbg("Registering active server %s", domain);
+	// Fast path: dotted IP (skip XNet DNS).
+	{
+		DWORD ip = NetDll_inet_addr(domain);
+		if (ip != INADDR_NONE && ip != 0) {
+			addr.S_un.S_addr = ip;
+			RegisterActiveServer(addr, description);
+			Sunrise_Dbg("RegisterActiveServerDomain: %s is IP %u.%u.%u.%u",
+				domain,
+				addr.S_un.S_un_b.s_b1, addr.S_un.S_un_b.s_b2,
+				addr.S_un.S_un_b.s_b3, addr.S_un.S_un_b.s_b4);
+			return;
+		}
+	}
 
 	event = WSACreateEvent();
-	XNetDnsLookup(domain, event, &dns);
-	if (!dns) goto error;
+	if (!event) {
+		Sunrise_Dbg("RegisterActiveServerDomain: WSACreateEvent failed");
+		goto error;
+	}
 
-	WaitForSingleObject((HANDLE)event, INFINITE);
-	if (dns->iStatus) goto error;
+	if (XNetDnsLookup(domain, event, &dns) != 0 || !dns) {
+		Sunrise_Dbg("RegisterActiveServerDomain: XNetDnsLookup failed for %s", domain);
+		goto error;
+	}
+
+	// Never block forever — console XNet DNS can stall on custom domains.
+	wait = WaitForSingleObject((HANDLE)event, 10000);
+	if (wait == WAIT_TIMEOUT) {
+		Sunrise_Dbg("RegisterActiveServerDomain: DNS timeout (10s) for %s", domain);
+		goto error;
+	}
+	if (wait != WAIT_OBJECT_0) {
+		Sunrise_Dbg("RegisterActiveServerDomain: WaitForSingleObject failed (%08X)", wait);
+		goto error;
+	}
+
+	if (dns->iStatus != 0) {
+		Sunrise_Dbg("RegisterActiveServerDomain: DNS status %d for %s", dns->iStatus, domain);
+		goto error;
+	}
+	if (dns->cina <= 0) {
+		Sunrise_Dbg("RegisterActiveServerDomain: no addresses for %s", domain);
+		goto error;
+	}
 
 	memcpy(&addr, dns->aina, sizeof(addr));
 
 	WSACloseEvent(event);
+	event = NULL;
 	XNetDnsRelease(dns);
+	dns = NULL;
 
 	RegisterActiveServer(addr, description);
-	performed_dns_lookup = true;
+	Sunrise_Dbg("RegisterActiveServerDomain: %s -> %u.%u.%u.%u",
+		domain,
+		addr.S_un.S_un_b.s_b1, addr.S_un.S_un_b.s_b2,
+		addr.S_un.S_un_b.s_b3, addr.S_un.S_un_b.s_b4);
 	return;
 
 error:
+	if (event)
+		WSACloseEvent(event);
+	if (dns)
+		XNetDnsRelease(dns);
+	Sunrise_Dbg("RegisterActiveServerDomain: FAILED for %s — LSP/XHTTP will break",
+		domain ? domain : "(null)");
 	XNotify(L"Failed to register Title Server!");
 }
 
@@ -206,10 +261,6 @@ int XamEnumerateHook(
 	if (
 		hEnum == lsp_enum_handle
 	) {
-		if (!performed_dns_lookup) {
-			RegisterHaloServer();
-		}
-
 		if (cbBuffer < sizeof(XTITLE_SERVER_INFO)) {
 			return ERROR_INSUFFICIENT_BUFFER;
 		}

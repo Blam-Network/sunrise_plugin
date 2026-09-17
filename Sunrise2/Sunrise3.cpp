@@ -10,15 +10,17 @@
 
 #include "stdafx.h"
 #include "CoreHooks.h"
+#include "XHttpHooks.h"
 #include "Utilities.h"
 #include <cstdarg>
 #include "Detour.h"
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
+#include "PacketCapture.h"
 
-const char* SunriseVers = "3.1.1";
+const char* SunriseVers = "3.1.2";
 
-const char blamnet_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "required,mass_storage,other,ttl,usr,shr,web,dbg,upl,prs,std,wb2";
+const char blamnet_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "required,mass_storage,other,ttl,usr,shr,web,dbg,upl,prs,std,wb2,bap,dwl";
 
 BOOL bIsDevkit; // Set on plugin load. Skips doing xnotify on devkits
 DWORD LastTitleId;
@@ -40,6 +42,16 @@ BOOL IsHalo(DWORD titleId) {
 		case Halo3ODST:
 		case HaloReach:
 		case HaloReachBeta:
+			return true;
+		default:
+			return false;
+	}
+}
+
+BOOL IsDestiny(DWORD titleId) {
+	switch (titleId) {
+		case Destiny:
+		case DestinyPreRelease:
 			return true;
 		default:
 			return false;
@@ -191,8 +203,9 @@ VOID SpoofTitleVersion(PLDR_DATA_TABLE_ENTRY moduleTable) {
 	else if (TitleID == DestinyPreRelease) {
 		Sunrise_Dbg("Destiny Pre Release detected! Spoofing...");
 
+		SetTitleId(DestinyPreRelease);
 		pExecutionId->TitleID = Destiny;
-		pExecutionId->Version = 23; // guessed
+		pExecutionId->Version = 5890; 
 		RenameSPA(sectionInfo, TitleID, Destiny, 0x160);
 	}
 }
@@ -262,13 +275,19 @@ VOID SetupHaloPatches() {
 		Readini();
 		ApplyPrivHook();
 
+		// Stop Destiny capture / key dump when leaving Destiny retail.
+		if (TitleID != Destiny) {
+			if (IsPacketCaptureActive())
+			StopPacketCapture();
+		}
+
 		LastTitleId = TitleID; // Set the last title id  to the current title id so we don't loop rechecking
 
 		XEX_SECTION_INFO* sectionInfo = (XEX_SECTION_INFO*)RtlImageXexHeaderField(PLDR_Xex->XexHeaderBase, XEX_HEADER_SECTION_TABLE);
 
 		Sunrise_Dbg("Loaded title %08X v %d", pExecutionId->TitleID, pExecutionId->Version);
 
-		if (IsHalo(TitleID)) {
+		if (IsHalo(TitleID) || IsDestiny(TitleID)) {
 			SetupLSPHooks();
 			SpoofTitleVersion(PLDR_Xex);
 		}
@@ -450,7 +469,28 @@ VOID SetupHaloPatches() {
 			}
 			}
 		}
-		else if (TitleID == DestinyPreRelease) // d1a
+		else if (TitleID == Destiny)
+		{
+			switch (PLDR_Xex->TimeDateStamp)
+			{
+			case 0x579810CC: // default_ttk_231 / tiger_release_final — Jul 27 2016 (v0.0.23.2)
+			{
+				Sunrise_Dbg("Destiny retail ttk_231 (Jul 2016) detected! Capture + BAP key dump...");
+				// StartPacketCapture();
+				// StartBapKeyDump();
+				XNotify(L"Destiny Sunrise Initialized!");
+				break;
+			}
+			default:
+			{
+				Sunrise_Dbg("Unrecognized Destiny xex! TimeDateStamp: 0x%X — trying string-scan key dump",
+					PLDR_Xex->TimeDateStamp);
+			XNotify(L"Destiny Sunrise Initialized!");
+				break;
+			}
+			}
+		}
+		else if (TitleID == DestinyPreRelease) // 36735.13.12.02.1953.alpha
 		{
 			switch (PLDR_Xex->TimeDateStamp)
 			{
@@ -458,7 +498,54 @@ VOID SetupHaloPatches() {
 				{
 					Sunrise_Dbg("Destiny 1 pre-alpha loaed. I hope you know what youre doing!");
 
-					SpoofTitleVersion(PLDR_Xex);
+					SetupSpoofHooks();
+					SetupXHttpHooks(); 
+					// Enable debug logs.
+					*((DWORD*)(0x825E0E44)) = 0x38A00001; // li r5, 1
+
+					// Skip password
+					*((DWORD*)(0x825E1038)) = 0x48000108; // b 0x825E1140
+
+					// Force cache0:\\ reports path available
+					*((DWORD*)(0x8280B720)) = 0x60000000;
+					*((DWORD*)(0x8280C040)) = 0x60000000;
+					*((DWORD*)(0x8280BF58)) = 0x480000C8;
+
+					// Bypass Proof of Ownership / DLC director dialog
+					// (from 41560907 Destiny patch.toml)
+					*((DWORD*)(0x83692AE8)) = 0x38600001; // unlock flag leaf -> yes
+					*((DWORD*)(0x83692AEC)) = 0x4E800020; // blr
+					*((DWORD*)(0x83693BA8)) = 0x38600001; // unlock expr -> yes
+					*((DWORD*)(0x83693BAC)) = 0x4E800020; // blr
+					*((DWORD*)(0x8282D230)) = 0x38800000; // offer-key lookup *a1=0
+					*((DWORD*)(0x8282D234)) = 0x90830000; // stw r4, 0(r3)
+					*((DWORD*)(0x8282D238)) = 0x4E800020; // blr
+					*((DWORD*)(0x82B31990)) = 0x38600000; // PoO needed? no
+					*((DWORD*)(0x82B31994)) = 0x4E800020;
+					*((DWORD*)(0x82B31900)) = 0x38600000; // PoO in progress? no
+					*((DWORD*)(0x82B31904)) = 0x4E800020;
+					*((DWORD*)(0x82B31A38)) = 0x38600000; // start PoO? never
+					*((DWORD*)(0x82B31A3C)) = 0x4E800020;
+					*((DWORD*)(0x82B31B30)) = 0x38600000; // PoO tick nop
+					*((DWORD*)(0x82B31B34)) = 0x4E800020;
+					*((DWORD*)(0x82B2A750)) = 0x38600001; // offer owned? yes
+					*((DWORD*)(0x82B2A754)) = 0x4E800020;
+					*((DWORD*)(0x82B2A378)) = 0x38600000; // ownership busy? no
+					*((DWORD*)(0x82B2A37C)) = 0x4E800020;
+					*((DWORD*)(0x82B2A808)) = 0x38600001; // owned content? yes
+					*((DWORD*)(0x82B2A80C)) = 0x4E800020;
+					*((DWORD*)(0x82BA7290)) = 0x38600001; // offer+key owned? yes
+					*((DWORD*)(0x82BA7294)) = 0x4E800020;
+					*((DWORD*)(0x82BA7360)) = 0x38600000; // DLC marketplace never
+					*((DWORD*)(0x82BA7364)) = 0x4E800020;
+					*((DWORD*)(0x82BA7480)) = 0x38600000; // DLC tick nop
+					*((DWORD*)(0x82BA7484)) = 0x4E800020;
+					*((DWORD*)(0x837CAF50)) = 0x38600001; // DLC kickoff ok
+					*((DWORD*)(0x837CAF54)) = 0x4E800020;
+					*((DWORD*)(0x837CABC0)) = 0x38600001; // PoO kickoff ok
+					*((DWORD*)(0x837CABC4)) = 0x4E800020;
+					*((DWORD*)(0x82BA6340)) = 0x38600000; // DLC wait clear
+					*((DWORD*)(0x82BA6344)) = 0x4E800020;
 
 					XNotify(L"Destiny Sunrise Initialized!");
 				}
@@ -610,11 +697,12 @@ VOID SetupHaloPatches() {
 	}
 }
 
-VOID RegisterHaloServer()
+VOID RegisterBungieServer()
 {
 	DWORD titleID = XamGetCurrentTitleId();
 
-	if (IsHalo(titleID)) {
+	// After Destiny PreRelease spoof, Xam title id is retail Destiny.
+	if (IsHalo(titleID) || IsDestiny(titleID)) {
 		RegisterActiveServerDomain(BlamnetDomain, blamnet_description);
 	}
 }
@@ -642,6 +730,7 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserve
 	case DLL_THREAD_DETACH:
 		break;
 	case DLL_PROCESS_DETACH:
+		StopPacketCapture();
 		Sunrise_Dbg("Unloaded!");
 		break;
 

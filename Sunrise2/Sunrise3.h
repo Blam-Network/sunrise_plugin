@@ -15,7 +15,7 @@ extern char* BlamnetDomain;
 
 VOID SpoofTitleVersion(PLDR_DATA_TABLE_ENTRY moduleTable);
 VOID SetupHaloPatches();
-VOID RegisterHaloServer();
+VOID RegisterBungieServer();
 BOOL IsHalo(DWORD titleId);
 
 #endif
