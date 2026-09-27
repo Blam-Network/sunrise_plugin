@@ -16,8 +16,6 @@
 #include "Detour.h"
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
-#include "PacketCapture.h"
-#include "BapKeyDump.h"
 
 const char* SunriseVers = "3.1.2";
 
@@ -273,14 +271,6 @@ VOID SetupHaloPatches() {
 		Readini();
 		ApplyPrivHook();
 
-		// Stop Destiny capture / key dump when leaving Destiny retail.
-		if (TitleID != Destiny) {
-			if (IsPacketCaptureActive())
-				StopPacketCapture();
-			if (IsBapKeyDumpActive())
-				StopBapKeyDump();
-		}
-
 		LastTitleId = TitleID; // Set the last title id  to the current title id so we don't loop rechecking
 
 		XEX_SECTION_INFO* sectionInfo = (XEX_SECTION_INFO*)RtlImageXexHeaderField(PLDR_Xex->XexHeaderBase, XEX_HEADER_SECTION_TABLE);
@@ -308,6 +298,11 @@ VOID SetupHaloPatches() {
 
 				if (bClearCacheOnLaunch)
 					SetupXMountUtilityDriveExHook(0x825982F8);
+
+				// Allow custom .maps.
+				*((DWORD*)(0x821AF1FC)) = 0x38600001;
+				*((DWORD*)(0x821B0E00)) = 0x48000014;
+				*((DWORD*)(0x821B10EC)) = 0x60000000;
 
 				XNotify(L"Halo Sunrise Initialized!");
 				break;
@@ -475,9 +470,7 @@ VOID SetupHaloPatches() {
 			{
 			case 0x579810CC: // default_ttk_231 / tiger_release_final — Jul 27 2016 (v0.0.23.2)
 			{
-				Sunrise_Dbg("Destiny retail ttk_231 (Jul 2016) detected! Capture + BAP key dump...");
-				// StartPacketCapture();
-				// StartBapKeyDump();
+				Sunrise_Dbg("Destiny retail ttk_231 (Jul 2016) detected!");
 				XNotify(L"Destiny Sunrise Initialized!");
 				break;
 			}
@@ -546,6 +539,75 @@ VOID SetupHaloPatches() {
 					*((DWORD*)(0x837CABC4)) = 0x4E800020;
 					*((DWORD*)(0x82BA6340)) = 0x38600000; // DLC wait clear
 					*((DWORD*)(0x82BA6344)) = 0x4E800020;
+
+					// Reduce min players for matchmade activities (strikes, crucible)
+					*((DWORD*)(0x829E0558)) = 0x38600001; // hopper min players -> li r3, 1
+					*((DWORD*)(0x829DFC30)) = 0x38600005; // lockdown wait 30s -> li r3, 5
+					// Team picker treats the 2-team hoppers (mode 3) like free-for-all,
+					// otherwise the balancing solver early-fails with one player.
+					*((DWORD*)(0x830D1418)) = 0x2B0B0003; // cmplwi cr6, r11, 3
+
+					// Audio: unmute the ui_music bus (-96 dB -> -3 dB).
+					static const DWORD ui_music_cave[] = {
+						0x7D8802A6, // mflr r12
+						0x9421FFE0, // stwu r1, -0x20(r1)
+						0x9181001C, // stw r12, 0x1C(r1)
+						0x90610018, // stw r3, 0x18(r1)   ; r3 = &CAkBus->propBundle
+						0x4BA81299, // bl 0x833AA0E8      ; the real reader
+						0x81610018, // lwz r11, 0x18(r1)
+						0x2C030001, // cmpwi r3, 1        ; AK_Success?
+						0x40820060, // bne 0x83928EBC
+						0x816B0000, // lwz r11, 0(r11)    ; NULL when numProps == 0
+						0x280B0000, // cmplwi r11, 0
+						0x41820054, // beq 0x83928EBC
+						0x894B0000, // lbz r10, 0(r11)    ; numProps
+						0x280A0000, // cmplwi r10, 0
+						0x41820048, // beq 0x83928EBC
+						0x392A0004, // addi r9, r10, 4
+						0x5529003A, // clrrwi r9, r9, 2
+						0x7D2B4A14, // add r9, r11, r9    ; -> float values
+						0x390B0001, // addi r8, r11, 1    ; -> propId bytes
+						0x7D4903A6, // mtctr r10
+						0x88E80000, // lbz r7, 0(r8)
+						0x28070004, // cmplwi r7, 4       ; bus gain?
+						0x4082001C, // bne 0x83928EB0
+						0x3CC0C2C0, // lis r6, 0xC2C0     ; -96.0f
+						0x80A90000, // lwz r5, 0(r9)
+						0x7C053040, // cmplw r5, r6
+						0x4082000C, // bne 0x83928EB0
+						0x3CA0C040, // lis r5, 0xC040     ; -3.0f
+						0x90A90000, // stw r5, 0(r9)
+						0x39080001, // addi r8, r8, 1
+						0x39290004, // addi r9, r9, 4
+						0x4200FFD4, // bdnz 0x83928E8C
+						0x8181001C, // lwz r12, 0x1C(r1)
+						0x38210020, // addi r1, r1, 0x20
+						0x7D8803A6, // mtlr r12
+						0x4E800020  // blr
+					};
+					memcpy((void*)0x83928E40, ui_music_cave, sizeof(ui_music_cave));
+
+					// CAkBus::SetInitialParams: send its one reader call through the cave.
+					*((DWORD*)(0x833824F8)) = 0x485A6949; // bl 0x83928E40
+
+					// Audio: resolve audio_globals when a music show needs it.
+					static const DWORD audio_globals_cave[] = {
+						0x7D8802A6, // mflr r12
+						0x9421FFE0, // stwu r1, -0x20(r1)
+						0x9181001C, // stw r12, 0x1C(r1)
+						0x90610018, // stw r3, 0x18(r1)   ; r3 = &dword_83D284FC
+						0x4B2F9CB1, // bl 0x82C22BC0      ; re-run the globals lookup
+						0x80610018, // lwz r3, 0x18(r1)
+						0x4B72ECC9, // bl 0x83057BE0      ; the original resolve
+						0x8181001C, // lwz r12, 0x1C(r1)
+						0x38210020, // addi r1, r1, 0x20
+						0x7D8803A6, // mtlr r12
+						0x4E800020  // blr
+					};
+					memcpy((void*)0x83928F00, audio_globals_cave, sizeof(audio_globals_cave));
+
+					// sub_82C162C8: send its resolve of dword_83D284FC through the cave.
+					*((DWORD*)(0x82C162E4)) = 0x48D12C1D; // bl 0x83928F00
 
 					XNotify(L"Destiny Sunrise Initialized!");
 				}
@@ -735,8 +797,6 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserve
 	case DLL_THREAD_DETACH:
 		break;
 	case DLL_PROCESS_DETACH:
-		StopPacketCapture();
-		StopBapKeyDump();
 		Sunrise_Dbg("Unloaded!");
 		break;
 

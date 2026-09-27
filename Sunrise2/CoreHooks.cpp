@@ -4,6 +4,10 @@
 #include "Detour.h"
 
 XTITLE_SERVER_INFO activeServer;
+// Set when RegisterActiveServer succeeds. XHTTP does its own DNS; DW/LSP
+// needs this IP via XamEnumerate — retry there if XNetStartup registration
+// never ran or failed.
+bool lsp_server_registered = false;
 
 int NetDll_socketHook(XNCALLER_TYPE n, int af, int type, int protocol)
 {
@@ -21,9 +25,9 @@ int NetDll_XNetStartupHook(XNCALLER_TYPE xnc, XNetStartupParams* xnsp)
 	// For devkits or modded boxes with devkit software.
 	xnsp->cfgFlags |= XNET_STARTUP_BYPASS_SECURITY;
 	int result = NetDll_XNetStartup(xnc, xnsp);
-	// XNetDnsLookup requires XNet to be up — register Blamnet after every startup.
-	if (result == 0) {
-		Sunrise_Dbg("XNetStartup ok — registering Blamnet server");
+	Sunrise_Dbg("XNetStartup hook result=%d",
+		result);
+	if (result == 0 && !lsp_server_registered) {
 		RegisterBungieServer();
 	}
 	return result;
@@ -165,6 +169,7 @@ struct halo_log_event
 void RegisterActiveServer(in_addr address, const char description[XTITLE_SERVER_MAX_SERVER_INFO_LEN]) {
 	activeServer.inaServer.S_un.S_addr = address.S_un.S_addr;
 	memcpy(activeServer.szServerInfo, description, XTITLE_SERVER_MAX_SERVER_INFO_LEN);
+	lsp_server_registered = (address.S_un.S_addr != 0);
 }
 
 void RegisterActiveServerDomain(char* domain, const char description[XTITLE_SERVER_MAX_SERVER_INFO_LEN]) {
@@ -261,6 +266,11 @@ int XamEnumerateHook(
 	if (
 		hEnum == lsp_enum_handle
 	) {
+		if (!lsp_server_registered) {
+			Sunrise_Dbg("XamEnumerate LSP - Blamnet not registered yet, resolving");
+			RegisterBungieServer();
+		}
+
 		if (cbBuffer < sizeof(XTITLE_SERVER_INFO)) {
 			return ERROR_INSUFFICIENT_BUFFER;
 		}
