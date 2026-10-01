@@ -241,17 +241,22 @@ VOID AllowRetailPlayers_HALOREACH_RETAIL()
 VOID SetupHaloPatches() {
 	PLDR_DATA_TABLE_ENTRY PLDR_Xex = (PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle;
 	if (!PLDR_Xex) {
-		Sunrise_Dbg("PLDR_HaloXex was null, weird");
+		Sunrise_Dbg("PLDR_HaloXex was null, exiting early");
 		return;
 	}
 	
 	XEX_EXECUTION_ID* pExecutionId = (XEX_EXECUTION_ID*)RtlImageXexHeaderField(PLDR_Xex->XexHeaderBase, XEX_HEADER_EXECUTION_ID);
 	if (!pExecutionId) {
-		Sunrise_Dbg("pExecutionId was null, exiting loop");
+		Sunrise_Dbg("pExecutionId was null, exiting early");
 		return;
 	}
 	
 	DWORD TitleID = pExecutionId->TitleID;
+	if (TitleID == 0xFFFE07D2) { //poor mans ogx support, dont explode the memory
+		Sunrise_Dbg("Detected OG Xbox game, exiting early");
+		return;
+	}
+	
 	if (TitleID != LastTitleId)
 	{
 		if (MountPath(MOUNT_POINT, GetMountPath()) != 0)
