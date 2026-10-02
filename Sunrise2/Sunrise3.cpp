@@ -52,7 +52,8 @@ BOOL bIgnoreTrueskill = FALSE;
 BOOL bLogEventsToStdout = TRUE;
 BOOL bClearCacheOnLaunch = TRUE;
 BOOL bEnableDevkitSockpatch = FALSE;
-char* BlamnetDomain = "xbl.lsp.blam.network";
+char BlamnetDomain[256] = "xbl.lsp.blam.network";
+char DefaultBlamnetDomain[21] = "xbl.lsp.blam.network";
 
 DWORD Halo3_Retail_XUserReadStats_Addr = 0x825B6358;
 DWORD Halo3_Epsilon_XUserReadStats_Addr = 0x826E77E8;
@@ -241,13 +242,13 @@ VOID AllowRetailPlayers_HALOREACH_RETAIL()
 VOID SetupHaloPatches() {
 	PLDR_DATA_TABLE_ENTRY PLDR_Xex = (PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle;
 	if (!PLDR_Xex) {
-		Sunrise_Dbg("PLDR_HaloXex was null, weird");
+		Sunrise_Dbg("PLDR_HaloXex was null, exiting early");
 		return;
 	}
 	
 	XEX_EXECUTION_ID* pExecutionId = (XEX_EXECUTION_ID*)RtlImageXexHeaderField(PLDR_Xex->XexHeaderBase, XEX_HEADER_EXECUTION_ID);
 	if (!pExecutionId) {
-		Sunrise_Dbg("pExecutionId was null, exiting loop");
+		Sunrise_Dbg("pExecutionId was null, exiting early");
 		return;
 	}
 	

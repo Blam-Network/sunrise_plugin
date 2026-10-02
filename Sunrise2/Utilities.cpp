@@ -273,7 +273,7 @@ VOID Readini()
 		bEnableDevkitSockpatch = ini_Sunrise_R.GetBoolValue("OPTIONS", "EnableDevkitSockpatch", FALSE);
 		bIgnoreTrueskill = ini_Sunrise_R.GetBoolValue("HALO_OPTIONS", "IgnoreTrueskill", FALSE);
 		bAllowRetailPlayers = ini_Sunrise_R.GetBoolValue("HALO_OPTIONS", "AllowRetailPlayers", TRUE);
-		strcpy(BlamnetDomain, ini_Sunrise_R.GetValue("HALO_OPTIONS", "BlamNetDomain", "xbl.lsp.blam.network"));
+		strncpy(BlamnetDomain, ini_Sunrise_R.GetValue("HALO_OPTIONS", "BlamNetDomain", DefaultBlamnetDomain), 256); //size of BlamnetDomain is always 256
 		bClearCacheOnLaunch = ini_Sunrise_R.GetBoolValue("HALO_OPTIONS", "ClearCacheOnLaunch", TRUE);
 		bLogEventsToStdout = ini_Sunrise_R.GetBoolValue("HALO_OPTIONS", "LogEventsToStdout", TRUE);
 		ini_Sunrise_R.Reset();
