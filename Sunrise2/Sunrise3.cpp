@@ -252,7 +252,7 @@ VOID SetupHaloPatches() {
 		return;
 	}
 	
-	
+	DWORD TitleID = pExecutionId->TitleID;
 	if (TitleID != LastTitleId)
 	{
 		if (MountPath(MOUNT_POINT, GetMountPath()) != 0)
