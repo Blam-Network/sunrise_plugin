@@ -52,7 +52,8 @@ BOOL bIgnoreTrueskill = FALSE;
 BOOL bLogEventsToStdout = TRUE;
 BOOL bClearCacheOnLaunch = TRUE;
 BOOL bEnableDevkitSockpatch = FALSE;
-char* BlamnetDomain = "xbl.lsp.blam.network";
+char BlamnetDomain[256] = "xbl.lsp.blam.network";
+char DefaultBlamnetDomain[21] = "xbl.lsp.blam.network";
 
 DWORD Halo3_Retail_XUserReadStats_Addr = 0x825B6358;
 DWORD Halo3_Epsilon_XUserReadStats_Addr = 0x826E77E8;
@@ -251,11 +252,6 @@ VOID SetupHaloPatches() {
 		return;
 	}
 	
-	DWORD TitleID = pExecutionId->TitleID;
-	if (TitleID == 0xFFFE07D2) { //poor mans ogx support, dont explode the memory
-		Sunrise_Dbg("Detected OG Xbox game, exiting early");
-		return;
-	}
 	
 	if (TitleID != LastTitleId)
 	{
