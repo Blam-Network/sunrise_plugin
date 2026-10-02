@@ -16,7 +16,7 @@
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
 
-const char* SunriseVers = "3.1.1";
+const char* SunriseVers = "3.2.0";
 
 const char blamnet_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "required,mass_storage,other,ttl,usr,shr,web,dbg,upl,prs,std,wb2";
 
@@ -290,6 +290,11 @@ VOID SetupHaloPatches() {
 
 				if (bClearCacheOnLaunch)
 					SetupXMountUtilityDriveExHook(0x825982F8);
+
+				// Allow custom .maps (ty lehvak)
+				*((DWORD*)(0x821AF1FC)) = 0x38600001;
+				*((DWORD*)(0x821B0E00)) = 0x48000014;
+				*((DWORD*)(0x821B10EC)) = 0x60000000;
 
 				XNotify(L"Halo Sunrise Initialized!");
 				break;
