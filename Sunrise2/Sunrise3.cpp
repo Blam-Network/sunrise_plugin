@@ -16,7 +16,7 @@
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
 
-const char* SunriseVers = "3.2.0";
+const char* SunriseVers = "3.2.1";
 
 const char blamnet_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "required,mass_storage,other,ttl,usr,shr,web,dbg,upl,prs,std,wb2";
 
@@ -48,16 +48,11 @@ BOOL IsHalo(DWORD titleId) {
 
 BOOL bAllowRetailPlayers = TRUE;
 BOOL bDisableXNotify = FALSE;
-BOOL bIgnoreTrueskill = FALSE;
 BOOL bLogEventsToStdout = TRUE;
 BOOL bClearCacheOnLaunch = TRUE;
 BOOL bEnableDevkitSockpatch = FALSE;
 char BlamnetDomain[256] = "xbl.lsp.blam.network";
 char DefaultBlamnetDomain[21] = "xbl.lsp.blam.network";
-
-DWORD Halo3_Retail_XUserReadStats_Addr = 0x825B6358;
-DWORD Halo3_Epsilon_XUserReadStats_Addr = 0x826E77E8;
-
 
 
 VOID SpoofTitleVersion(PLDR_DATA_TABLE_ENTRY moduleTable) {
@@ -270,6 +265,7 @@ VOID SetupHaloPatches() {
 		Sunrise_Dbg("Loaded title %08X v %d", pExecutionId->TitleID, pExecutionId->Version);
 
 		if (IsHalo(TitleID)) {
+			SetupStatsReadHook();
 			SetupLSPHooks();
 			SpoofTitleVersion(PLDR_Xex);
 		}
@@ -285,9 +281,6 @@ VOID SetupHaloPatches() {
 				if (bAllowRetailPlayers)
 					AllowRetailPlayers_HALO3_RETAIL();
 
-				if (bIgnoreTrueskill)
-					SetupXUserReadStatsHook(Halo3_Retail_XUserReadStats_Addr);
-
 				if (bClearCacheOnLaunch)
 					SetupXMountUtilityDriveExHook(0x825982F8);
 
@@ -302,9 +295,6 @@ VOID SetupHaloPatches() {
 			case 0x46CA8883: // Halo 3 Epsilon Aug 20th 2007
 			{
 				Sunrise_Dbg("Halo 3 Epsilon (Aug 20th) detected! Initialising hooks...");
-
-				if (bIgnoreTrueskill)
-					SetupXUserReadStatsHook(Halo3_Epsilon_XUserReadStats_Addr);
 
 				if (bLogEventsToStdout)
 					SetupHalo3EventsHook(0x82235F08);

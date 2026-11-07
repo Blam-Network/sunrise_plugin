@@ -2,6 +2,7 @@
 #include "Sunrise3.h"
 #include "Utilities.h"
 #include "Detour.h"
+#include <ppcintrinsics.h>
 
 XTITLE_SERVER_INFO activeServer;
 
@@ -297,19 +298,242 @@ VOID SetupLoadHooks(PLDR_DATA_TABLE_ENTRY moduleHandle)
 	}
 }
 
-DWORD __stdcall XUserReadStats_hook(DWORD, DWORD, DWORD, DWORD, DWORD, DWORD* pcbResults, DWORD* pResults, void*)
+// --- Leaderboard (TrueSkill) stats reads ---------------------------------------
+//
+// XUserReadStats is XDK library code linked into every title (sub_826E77E8 in
+// Halo 3 Epsilon). It packs its arguments into a 0x1C-byte buffer and passes
+// them to xam with XMsgStartIORequest(0xFB, 0xB0021, ...). Hooking that xam
+// import catches the stats read in every build with no per-build address.
+//
+// When the leaderboard service is down the read fails ("networking:leaderboards:
+// stats query failed", ERROR_FUNCTION_FAILED / 0x80159000) and matchmaking stops.
+// The hook runs the real read first. If it fails, the title gets a successful
+// read with no stats views in place of the error.
+
+static const HXAMAPP StatsReadApp = (HXAMAPP)0xFB;
+static const DWORD StatsReadMessage = 0xB0021;
+
+// The XUserReadStats arguments, in the order XUserReadStats packs them.
+struct StatsReadRequest
 {
-	if (pcbResults)
-		*pcbResults = 4;
-	if (pResults)
-		*pResults = 0;
+	DWORD titleId;
+	DWORD numXuids;
+	const XUID* xuids;
+	DWORD numStatsSpecs;
+	const VOID* statsSpecs;
+	DWORD cbResults;
+	PXUSER_STATS_READ_RESULTS results;
+};
+
+// One asynchronous read. The real request runs on a worker thread with the
+// inner overlapped. The title's overlapped (outer) completes when the worker
+// has the result.
+struct StatsReadCall
+{
+	XOVERLAPPED inner;
+	PXOVERLAPPED outer;
+	StatsReadRequest request;
+	LONG refs;
+	StatsReadCall* next;
+};
+
+// Reads the title has started and not yet seen complete or cancelled.
+static CRITICAL_SECTION statsReadLock;
+static StatsReadCall* statsReadCalls = NULL;
+
+static VOID StatsReadLink(StatsReadCall* call)
+{
+	call->next = statsReadCalls;
+	statsReadCalls = call;
+}
+
+// Caller holds statsReadLock. Returns FALSE when the call is no longer listed.
+static BOOL StatsReadUnlink(StatsReadCall* call)
+{
+	for (StatsReadCall** link = &statsReadCalls; *link; link = &(*link)->next) {
+		if (*link == call) {
+			*link = call->next;
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+static VOID StatsReadRelease(StatsReadCall* call)
+{
+	if (InterlockedDecrement(&call->refs) == 0) {
+		if (call->inner.hEvent)
+			CloseHandle(call->inner.hEvent);
+		free(call);
+	}
+}
+
+// The "no stats" answer: a read that found no views.
+static VOID StatsReadWriteEmpty(PXUSER_STATS_READ_RESULTS results)
+{
+	if (results) {
+		results->dwNumViews = 0;
+		results->pViews = NULL;
+	}
+}
+
+// Complete an overlapped the way xam does for a title without a completion
+// routine: result fields first, status last, then the event.
+static VOID StatsReadComplete(PXOVERLAPPED overlapped, DWORD status, DWORD extendedError)
+{
+	overlapped->InternalHigh = 0;
+	overlapped->dwExtendedError = extendedError;
+	__lwsync();
+	overlapped->InternalLow = status;
+	if (overlapped->hEvent)
+		SetEvent(overlapped->hEvent);
+}
+
+static DWORD WINAPI StatsReadWorker(LPVOID param)
+{
+	StatsReadCall* call = (StatsReadCall*)param;
+
+	DWORD status;
+	DWORD extendedError = 0;
+	HRESULT hr = XMsgStartIORequest(StatsReadApp, StatsReadMessage, &call->inner,
+		&call->request, sizeof(call->request));
+	if (SUCCEEDED(hr)) {
+		DWORD bytes = 0;
+		status = XGetOverlappedResult(&call->inner, &bytes, TRUE);
+		if (status != ERROR_SUCCESS)
+			extendedError = XGetOverlappedExtendedError(&call->inner);
+	}
+	else {
+		status = ERROR_FUNCTION_FAILED;
+		extendedError = hr;
+	}
+
+	EnterCriticalSection(&statsReadLock);
+	// Not listed: the title cancelled the read, and the cancel hook completed it.
+	if (StatsReadUnlink(call)) {
+		if (status != ERROR_SUCCESS) {
+			Sunrise_Dbg("Stats read failed (status %u, extended %08X), answering with no stats",
+				status, extendedError);
+			StatsReadWriteEmpty(call->request.results);
+			status = ERROR_SUCCESS;
+			extendedError = 0;
+		}
+		StatsReadComplete(call->outer, status, extendedError);
+	}
+	LeaveCriticalSection(&statsReadLock);
+
+	StatsReadRelease(call);
 	return 0;
 }
 
-VOID SetupXUserReadStatsHook(DWORD Address)
+HRESULT XMsgStartIORequestHook(HXAMAPP hxamapp, DWORD dwMessage, PXOVERLAPPED pOverlapped, PVOID pUserBuffer, DWORD cbUserBuffer)
 {
-	Sunrise_Dbg("Ignoring true skill");
-	PatchInJump((DWORD*)Address, (DWORD)&XUserReadStats_hook, false);
+	if (hxamapp != StatsReadApp || dwMessage != StatsReadMessage
+		|| pUserBuffer == NULL || cbUserBuffer != sizeof(StatsReadRequest)) {
+		return XMsgStartIORequest(hxamapp, dwMessage, pOverlapped, pUserBuffer, cbUserBuffer);
+	}
+
+	StatsReadRequest* request = (StatsReadRequest*)pUserBuffer;
+
+	// Synchronous read. XUserReadStats reports failure through the thread's
+	// last error after a successful XMsgStartIORequest.
+	if (pOverlapped == NULL) {
+		HRESULT hr = XMsgStartIORequest(hxamapp, dwMessage, NULL, pUserBuffer, cbUserBuffer);
+		if (SUCCEEDED(hr) && GetLastError() == ERROR_SUCCESS)
+			return hr;
+
+		Sunrise_Dbg("Stats read failed (hr %08X, error %u), answering with no stats", hr, GetLastError());
+		StatsReadWriteEmpty(request->results);
+		SetLastError(ERROR_SUCCESS);
+		return S_OK;
+	}
+
+	// A completion routine would need an APC queued to the title's thread.
+	// Leave those reads alone.
+	if (pOverlapped->pCompletionRoutine != NULL)
+		return XMsgStartIORequest(hxamapp, dwMessage, pOverlapped, pUserBuffer, cbUserBuffer);
+
+	StatsReadCall* call = (StatsReadCall*)malloc(sizeof(StatsReadCall));
+	if (call == NULL)
+		return XMsgStartIORequest(hxamapp, dwMessage, pOverlapped, pUserBuffer, cbUserBuffer);
+
+	memset(call, 0, sizeof(StatsReadCall));
+	call->inner.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	call->outer = pOverlapped;
+	call->request = *request; // The title's buffer is on its stack.
+	call->refs = 1;           // Owned by the worker.
+
+	if (call->inner.hEvent == NULL) {
+		free(call);
+		return XMsgStartIORequest(hxamapp, dwMessage, pOverlapped, pUserBuffer, cbUserBuffer);
+	}
+
+	// Mark the title's overlapped pending, as xam does when it accepts a request.
+	pOverlapped->InternalLow = ERROR_IO_PENDING;
+	pOverlapped->InternalHigh = 0;
+	pOverlapped->dwExtendedError = 0;
+	if (pOverlapped->hEvent)
+		ResetEvent(pOverlapped->hEvent);
+
+	EnterCriticalSection(&statsReadLock);
+	StatsReadLink(call);
+	LeaveCriticalSection(&statsReadLock);
+
+	HANDLE thread = NULL;
+	DWORD threadId = 0;
+	ExCreateThread(&thread, 0, &threadId, (PVOID)XapiThreadStartup,
+		(LPTHREAD_START_ROUTINE)StatsReadWorker, call, 0x2 | CREATE_SUSPENDED);
+	if (thread == NULL) {
+		EnterCriticalSection(&statsReadLock);
+		StatsReadUnlink(call);
+		LeaveCriticalSection(&statsReadLock);
+		StatsReadRelease(call);
+		return XMsgStartIORequest(hxamapp, dwMessage, pOverlapped, pUserBuffer, cbUserBuffer);
+	}
+
+	XSetThreadProcessor(thread, 4);
+	ResumeThread(thread);
+	CloseHandle(thread);
+	return S_OK;
+}
+
+HRESULT XMsgCancelIORequestHook(PXOVERLAPPED pOverlapped, BOOL fWait)
+{
+	StatsReadCall* call = NULL;
+
+	EnterCriticalSection(&statsReadLock);
+	for (StatsReadCall* item = statsReadCalls; item; item = item->next) {
+		if (item->outer == pOverlapped) {
+			call = item;
+			StatsReadUnlink(call);
+			InterlockedIncrement(&call->refs);
+			break;
+		}
+	}
+	LeaveCriticalSection(&statsReadLock);
+
+	// xam only knows about the inner overlapped of a stats read.
+	if (call == NULL)
+		return XMsgCancelIORequest(pOverlapped, fWait);
+
+	HRESULT hr = XMsgCancelIORequest(&call->inner, fWait);
+	StatsReadComplete(pOverlapped, ERROR_CANCELLED, 0);
+	StatsReadRelease(call);
+	return hr;
+}
+
+VOID SetupStatsReadHook()
+{
+	static BOOL lockReady = FALSE;
+	if (!lockReady) {
+		InitializeCriticalSection(&statsReadLock);
+		lockReady = TRUE;
+	}
+
+	PLDR_DATA_TABLE_ENTRY title = (PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle;
+	if (PatchModuleImport(title, MODULE_XAM, 503, (DWORD)XMsgStartIORequestHook) != S_OK)
+		Sunrise_Dbg("Stats read hook: title does not import XMsgStartIORequest");
+	PatchModuleImport(title, MODULE_XAM, 504, (DWORD)XMsgCancelIORequestHook);
 }
 
 

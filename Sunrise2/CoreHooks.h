@@ -9,7 +9,7 @@ VOID RegisterActiveServerDomain(char* domain, const char description[XTITLE_SERV
 VOID SetupLSPHooks();
 VOID SetupSpoofHooks();
 VOID SetupLoadHooks(PLDR_DATA_TABLE_ENTRY moduleHandle);
-VOID SetupXUserReadStatsHook(DWORD Address);
+VOID SetupStatsReadHook();
 VOID SetTitleId(DWORD title_id);
 VOID SetupXMountUtilityDriveExHook(DWORD functionAddress);
 VOID ApplyPrivHook();
