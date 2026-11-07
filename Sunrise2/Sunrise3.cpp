@@ -16,10 +16,14 @@
 #include "Detour.h"
 #include <ppcintrinsics.h>
 #include "HaloHooks.h"
+#include "DestinyCapture.h"
 
 const char* SunriseVers = "3.1.2";
 
 const char blamnet_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "required,mass_storage,other,ttl,usr,shr,web,dbg,upl,prs,std,wb2,bap,dwl";
+// Destiny reads the first token as the LSP environment and only accepts "*"
+// or its configured env (sub_82BC39E0 in day0), then looks for "dwl" in the rest.
+const char destiny_description[XTITLE_SERVER_MAX_SERVER_INFO_LEN] = "*,ttl,usr,shr,upl,web,prs,std,dbg,bap,dwl";
 
 BOOL bIsDevkit; // Set on plugin load. Skips doing xnotify on devkits
 DWORD LastTitleId;
@@ -32,6 +36,8 @@ const DWORD HaloReach = 0x4D53085B;
 const DWORD HaloReachBeta = 0x4D53885C;
 const DWORD DestinyPreRelease = 0x41560907;
 const DWORD Destiny = 0x415608F8;
+// Disc xex (TU0, day0), tiger_release_final Jul 04 2014.
+const DWORD DestinyTU0TimeStamp = 0x53B5D6BA;
 
 BOOL IsHalo(DWORD titleId) {
 	switch (titleId) {
@@ -63,6 +69,13 @@ BOOL bIgnoreTrueskill = FALSE;
 BOOL bLogEventsToStdout = TRUE;
 BOOL bClearCacheOnLaunch = TRUE;
 BOOL bEnableDevkitSockpatch = FALSE;
+// [DESTINY_OPTIONS] PacketCapture: 2.3.1 capture hooks (DestinyCapture.cpp).
+BOOL bPacketCapture = TRUE;
+// Per-hook-group switches, all on. Turn one off to bisect a crash in a single boot.
+BOOL bCaptureHooksBap = TRUE;
+BOOL bCaptureHooksXHttp = TRUE;
+// [DESTINY_OPTIONS] CaptureOverlay: on-screen counters + watermark while capturing.
+BOOL bCaptureOverlay = TRUE;
 // Writable buffer — Readini strcpy's into this (must not point at a literal).
 char BlamnetDomainBuf[256] = "dev.xbl.lsp.blam.network";
 char* BlamnetDomain = BlamnetDomainBuf;
@@ -209,6 +222,31 @@ VOID SpoofTitleVersion(PLDR_DATA_TABLE_ENTRY moduleTable) {
 		pExecutionId->Version = 5890; 
 		RenameSPA(sectionInfo, TitleID, Destiny, 0x160);
 	}
+	else if (TitleID == Destiny) 
+	{
+		switch (PLDR_HaloXex->TimeDateStamp) 
+		{
+			case DestinyTU0TimeStamp:
+			{
+				SetTitleId(Destiny);
+				pExecutionId->TitleID = Destiny;
+				pExecutionId->Version = 5890;
+				RenameSPA(sectionInfo, TitleID, Destiny, 0x160);
+			}
+		}
+	}
+}
+
+// Destiny TU0 reads LiveServiceUrl.activeservices from the Live hive before
+// Demonware auth (sub_83127338 via sub_8269F978) and retries forever when it
+// fails, which it does without a real Live connection. Anything that isn't
+// part./cert.xboxlive.com selects the prod auth host.
+DWORD DestinyQueryLiveHiveHook(const char* name, CHAR* out, DWORD cch, PXOVERLAPPED overlapped)
+{
+	Sunrise_Dbg("Destiny Live hive query '%s' -> prod", name ? name : "(null)");
+	if (out && cch)
+		strncpy_s(out, cch, "prod.xboxlive.com", _TRUNCATE);
+	return ERROR_SUCCESS;
 }
 
 VOID AllowRetailPlayers_HALO3_RETAIL()
@@ -261,6 +299,7 @@ VOID SetupHaloPatches() {
 	XEX_EXECUTION_ID* pExecutionId = (XEX_EXECUTION_ID*)RtlImageXexHeaderField(PLDR_Xex->XexHeaderBase, XEX_HEADER_EXECUTION_ID);
 
 	DWORD TitleID = pExecutionId->TitleID;
+	Sunrise_Trace("SetupHaloPatches title %08X last %08X timestamp %08X", TitleID, LastTitleId, PLDR_Xex->TimeDateStamp);
 	if (TitleID != LastTitleId)
 	{
 		if (MountPath(MOUNT_POINT, GetMountPath()) != 0)
@@ -269,7 +308,9 @@ VOID SetupHaloPatches() {
 			return;
 		}
 		Readini();
+		Sunrise_Trace("Readini done");
 		ApplyPrivHook();
+		Sunrise_Trace("ApplyPrivHook done");
 
 		LastTitleId = TitleID; // Set the last title id  to the current title id so we don't loop rechecking
 
@@ -277,9 +318,18 @@ VOID SetupHaloPatches() {
 
 		Sunrise_Dbg("Loaded title %08X v %d", pExecutionId->TitleID, pExecutionId->Version);
 
-		if (IsHalo(TitleID) || IsDestiny(TitleID)) {
+		// Retail Destiny only goes to Blam Network when LB picked it at launch
+		// (XexLoadExecutableHook) and the disc xex really loaded without its
+		// title update. Anything else is left alone for Bungie's release servers.
+		BOOL destinyBlam = TitleID == Destiny && bDestinyBlamRequested
+			&& PLDR_Xex->TimeDateStamp == DestinyTU0TimeStamp;
+
+		Sunrise_Trace("destinyBlam %d (LB %d)", destinyBlam, bDestinyBlamRequested);
+		if (IsHalo(TitleID) || TitleID == DestinyPreRelease || destinyBlam) {
 			SetupLSPHooks();
+			Sunrise_Trace("SetupLSPHooks done");
 			SpoofTitleVersion(PLDR_Xex);
+			Sunrise_Trace("SpoofTitleVersion done");
 		}
 
 		if (TitleID == Halo3 || TitleID == Halo3ExternalBeta || TitleID == Halo3InternalBeta) // Check for both regular and alpha/beta title ids
@@ -470,15 +520,82 @@ VOID SetupHaloPatches() {
 			{
 			case 0x579810CC: // default_ttk_231 / tiger_release_final — Jul 27 2016 (v0.0.23.2)
 			{
-				Sunrise_Dbg("Destiny retail ttk_231 (Jul 2016) detected!");
-				XNotify(L"Destiny Sunrise Initialized!");
+				// Title update 2.3.1 on Bungie's release servers. No Blam hooks
+				// here, the game must reach the real services untouched.
+				Sunrise_Dbg("Destiny retail ttk_231 (Jul 2016) detected, release servers");
+
+				// Plaintext BAP / XHttp capture, started and stopped with
+				// L3 + R3 + Y and LB. Records nothing until then.
+				SetupDestinyCapture();
+				Sunrise_Trace("SetupDestinyCapture done");
+
+				// Expansion content: the marketplace is shut down, so a licence
+				// that is gone cannot be re-acquired. sub_828096F0(destination)
+				// answers "this destination belongs to an expansion" - it maps
+				// the destination through sub_82809230 and tests the result for
+				// -1 - and the world-transition gate sub_82739748 refuses the
+				// transition while it is true, logging "World-transition
+				// requires DLC.". Returning 0 says no destination is gated.
+				// The expansion packages still have to be on the drive; this
+				// only removes the ownership check, not the content.
+				// Read the words back: a write that silently does not stick is
+				// indistinguishable from a wrong theory otherwise.
+				Sunrise_Dbg("expansion gate before: %08X %08X",
+					*((DWORD*)(0x828096F0)), *((DWORD*)(0x828096F4)));
+				*((DWORD*)(0x828096F0)) = 0x38600000; // li r3, 0
+				*((DWORD*)(0x828096F4)) = 0x4E800020; // blr
+				Sunrise_Dbg("expansion gate after:  %08X %08X (want 38600000 4E800020)",
+					*((DWORD*)(0x828096F0)), *((DWORD*)(0x828096F4)));
+
+				XNotify(L"Destiny: release servers");
+				Sunrise_Trace("ttk_231 setup done");
+				break;
+			}
+			case DestinyTU0TimeStamp: // tiger_release_final - Jul 04 2014 (0.0.0.2)
+			{
+				if (!destinyBlam) {
+					// No title update installed and LB not held.
+					Sunrise_Dbg("Destiny TU0 without LB, leaving it alone for release servers");
+					XNotify(L"Destiny: release servers");
+					break;
+				}
+
+				Sunrise_Dbg("Destiny TU0 detected, Blam Network");
+				SetupSpoofHooks();
+				Sunrise_Trace("SetupSpoofHooks done");
+				SetupXHttpHooks();
+				Sunrise_Trace("SetupXHttpHooks done");
+
+				// DLC scan (sub_82CD92F0): cached XamContentAggregateCreateEnumerator.
+				SetupContentAggregateHook(0x836A3F44);
+				Sunrise_Trace("content aggregate hook done");
+
+				// Live hive read for the Demonware environment.
+				PatchInJump((DWORD*)0x83127338, (DWORD)DestinyQueryLiveHiveHook, FALSE);
+				Sunrise_Trace("Live hive hook done");
+
+				// Content manifest: drop the RSA-PSS signature requirement so the
+				// server can list the patchable packages. With the flag clear the
+				// body is the bare protobuf (sub_82411EA0, 0x82411F50).
+				*((BYTE*)(0x833DB860)) = 0;
+
+				// Package signatures: sub_82504238 hashes the first 320 bytes of
+				// a package header and RSA-verifies a 256-byte signature against
+				// the shipped key list, and sub_82512600 registers nothing that
+				// fails it. Returning true accepts edited packages.
+				*((DWORD*)(0x82504238)) = 0x38600001; // li r3, 1
+				*((DWORD*)(0x8250423C)) = 0x4E800020; // blr
+				Sunrise_Trace("package signature check patched");
+
+				XNotify(L"Destiny: Blam Network");
+				Sunrise_Trace("TU0 setup done");
 				break;
 			}
 			default:
 			{
-				Sunrise_Dbg("Unrecognized Destiny xex! TimeDateStamp: 0x%X — trying string-scan key dump",
+				Sunrise_Dbg("Unrecognized Destiny xex! TimeDateStamp: 0x%X, leaving it alone",
 					PLDR_Xex->TimeDateStamp);
-				XNotify(L"Destiny Sunrise Initialized!");
+				XNotify(L"Destiny: unknown xex - no patches");
 				break;
 			}
 			}
@@ -767,7 +884,8 @@ VOID RegisterBungieServer()
 	if (IsHalo(titleID) || IsDestiny(titleID)) {
 		Sunrise_Dbg("RegisterBungieServer: title %08X domain %s",
 			titleID, BlamnetDomain ? BlamnetDomain : "(null)");
-		RegisterActiveServerDomain(BlamnetDomain, blamnet_description);
+		RegisterActiveServerDomain(BlamnetDomain,
+			IsDestiny(titleID) ? destiny_description : blamnet_description);
 	} else {
 		Sunrise_Dbg("RegisterBungieServer: skip — title %08X not Halo/Destiny",
 			titleID);
@@ -788,7 +906,9 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserve
 			return FALSE;
 		}
 
+		Sunrise_Trace("DllMain attach");
 		SetupLoadHooks(nullptr);
+		Sunrise_Trace("load hooks set");
 		bIsDevkit = *(DWORD*)0x8E038610 & 0x8000 ? FALSE : TRUE; // Simple devkit check
 		Sunrise_Dbg("v%s loaded! Running on %s kernel", SunriseVers, bIsDevkit ? "Devkit" : "Retail");
 		break;
@@ -797,6 +917,9 @@ BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserve
 	case DLL_THREAD_DETACH:
 		break;
 	case DLL_PROCESS_DETACH:
+		// A capture still running here would leave its file open and short of
+		// the frames still in the ring.
+		DestinyCaptureShutdown();
 		Sunrise_Dbg("Unloaded!");
 		break;
 

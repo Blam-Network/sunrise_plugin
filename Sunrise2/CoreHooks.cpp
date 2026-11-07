@@ -2,6 +2,7 @@
 #include "Sunrise3.h"
 #include "Utilities.h"
 #include "Detour.h"
+#include "DestinyCapture.h"
 
 XTITLE_SERVER_INFO activeServer;
 // Set when RegisterActiveServer succeeds. XHTTP does its own DNS; DW/LSP
@@ -18,6 +19,17 @@ int NetDll_socketHook(XNCALLER_TYPE n, int af, int type, int protocol)
 	}
 
 	return s;
+}
+
+// The title tearing its network down is the last point where everything the
+// capture needs is still alive: the image is mapped, threads are running and
+// the file handle is good. Closing the capture here rather than at
+// XexLoadExecutable keeps the flush and the hook removal off the teardown path.
+int NetDll_XNetCleanupHook(XNCALLER_TYPE xnc)
+{
+	Sunrise_Dbg("XNetCleanup hook, closing any running capture");
+	DestinyCaptureShutdown();
+	return NetDll_XNetCleanup(xnc);
 }
 
 int NetDll_XNetStartupHook(XNCALLER_TYPE xnc, XNetStartupParams* xnsp)
@@ -109,6 +121,31 @@ DWORD XamContentCreateEnumeratorHook(
 		pcbBuffer,
 		phEnum
 	);
+}
+
+// Destiny TU0 finds installed DLC with XamContentAggregateCreateEnumerator
+// (xam ordinal 0x279, marketplace content type), resolved at runtime into a
+// cached pointer (sub_82CD8E90), so no import hook sees it. Pointing the
+// cache at this hook before the title runs routes the DLC scan through here.
+
+// Title id with no marketplace content on disk: the pre-alpha one.
+const DWORD NoDlcTitleId = 0x41560907;
+
+DWORD XamContentAggregateCreateEnumeratorHook(XUID xuid, XCONTENTDEVICEID device_id, DWORD content_type, DWORD title_id, PHANDLE enumerator)
+{
+	// The spoofed TU0 must not load marketplace content made for later title
+	// updates. Enumerate a title that has none so the scan finds nothing.
+	if (content_type == XCONTENTTYPE_MARKETPLACE) {
+		Sunrise_Dbg("Version spoofing - hiding DLC from content scan (title %08X)", title_id);
+		title_id = NoDlcTitleId;
+	}
+
+	return XamContentAggregateCreateEnumerator(xuid, device_id, content_type, title_id, enumerator);
+}
+
+VOID SetupContentAggregateHook(DWORD cached_pointer)
+{
+	*(DWORD*)cached_pointer = (DWORD)XamContentAggregateCreateEnumeratorHook;
 }
 
 DWORD XamUserReadProfileSettingsHook(
@@ -307,26 +344,75 @@ int XamEnumerateHook(
 
 VOID SetupLoadHooks(PLDR_DATA_TABLE_ENTRY moduleHandle);
 
+// Destiny launch mode: holding LB while Destiny starts runs it against Blam
+// Network (spoofed). Otherwise the plugin leaves it alone for release servers.
+
+BOOL bDestinyBlamRequested = FALSE;
+
+// One read of the pads when a title starts. SYSTEMAPP input is the dashboard's
+// own stream and comes back with no buttons while a title is launching, so the
+// plain gamepad query goes first - the same flags the title itself polls with.
+BOOL IsLeftShoulderHeld()
+{
+	const DWORD flagSets[3] = {
+		XINPUT_FLAG_GAMEPAD,
+		XINPUT_FLAG_ANYUSER | XINPUT_FLAG_GAMEPAD,
+		XINPUT_FLAG_SYSTEMAPP | XINPUT_FLAG_GAMEPAD,
+	};
+	XINPUT_STATE state;
+	for (DWORD set = 0; set < ARRAYSIZE(flagSets); set++) {
+		for (DWORD user = 0; user < XUSER_MAX_COUNT; user++) {
+			ZeroMemory(&state, sizeof(state));
+			DWORD result = XamInputGetState(user, flagSets[set], &state);
+			if (result != ERROR_SUCCESS)
+				continue;
+			Sunrise_Trace("launch pad %d flags %08X buttons %04X", user, flagSets[set], state.Gamepad.wButtons);
+			if (state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) {
+				Sunrise_Dbg("Launch pad %d buttons %04X (flags %08X)", user, state.Gamepad.wButtons, flagSets[set]);
+				return TRUE;
+			}
+		}
+	}
+	return FALSE;
+}
+
 NTSTATUS XexLoadExecutableHook(PCHAR Name, PHANDLE Handle, DWORD TypeFlags, DWORD Version) {
-	Sunrise_Print("XexLoadExecutableHook with name %s handle %d", Name, *(DWORD*)Handle);
+	Sunrise_Trace("XexLoadExecutable %s flags %08X version %08X", Name, TypeFlags, Version);
+
+	bDestinyBlamRequested = IsLeftShoulderHeld();
+	Sunrise_Trace("LB check done: %d", bDestinyBlamRequested);
+	if (bDestinyBlamRequested) {
+		Sunrise_Dbg("LB held at launch");
+		// A new process: set Destiny up again even if it was also the last title.
+		LastTitleId = 0;
+	}
+
+	// Stop a running capture and restore its hooks while the old image is mapped.
+	if (DestinyCaptureNewExecutable())
+		LastTitleId = 0;
+	Sunrise_Trace("capture new-executable check done, calling XexLoadExecutable");
+
 	HANDLE Module = 0;
 	NTSTATUS Result = XexLoadExecutable(Name, &Module, TypeFlags, Version);
-	Sunrise_Print("XexLoadExecutable called got handle %d", Name, *(DWORD*)Handle);
+	Sunrise_Trace("XexLoadExecutable result %08X module %08X", Result, Module);
 	if (Handle != 0) *Handle = Module;
 	if (NT_SUCCESS(Result)) SetupHaloPatches();
+	Sunrise_Trace("SetupHaloPatches returned, SetupLoadHooks(%08X)", Module);
 	SetupLoadHooks((PLDR_DATA_TABLE_ENTRY)Module);
+	Sunrise_Trace("XexLoadExecutableHook done");
 	return Result;
 }
 
 NTSTATUS XexLoadImageHook(CONST PCHAR Name, DWORD TypeFlags, DWORD Version, PHANDLE Handle) {
-	Sunrise_Print("XexLoadExecutableHook with name %s handle %d", Name, *(DWORD*)Handle);
+	Sunrise_Trace("XexLoadImage %s flags %08X version %08X", Name, TypeFlags, Version);
 
 	HANDLE Module = 0;
 	NTSTATUS Result = XexLoadImage(Name, TypeFlags, Version, &Module);
-	Sunrise_Print("XexLoadImage called got handle %d", Name, *(DWORD*)Handle);
+	Sunrise_Trace("XexLoadImage result %08X module %08X", Result, Module);
 	if (Handle != 0) *Handle = Module;
 	if (NT_SUCCESS(Result)) SetupHaloPatches();
 	SetupLoadHooks((PLDR_DATA_TABLE_ENTRY)Module);
+	Sunrise_Trace("XexLoadImageHook done");
 	return Result;
 }
 
@@ -334,6 +420,7 @@ VOID SetupLSPHooks()
 {
 	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 3, (DWORD)NetDll_socketHook);
 	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 51, (DWORD)NetDll_XNetStartupHook);
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 52, (DWORD)NetDll_XNetCleanupHook);
 	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 58, (DWORD)NetDll_XNetServerToInAddrHook);
 	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 63, (DWORD)NetDll_XNetUnregisterInAddrHook);
 	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 590, (DWORD)XamCreateEnumeratorHandleHook);

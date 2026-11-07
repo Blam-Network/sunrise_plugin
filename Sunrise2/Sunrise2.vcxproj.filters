@@ -10,6 +10,10 @@
     <ClCompile Include="CoreHooks.cpp" />
     <ClCompile Include="Detour.cpp" />
     <ClCompile Include="HaloHooks.cpp" />
+    <ClCompile Include="XHttpHooks.cpp" />
+    <ClCompile Include="DestinyCapture.cpp" />
+    <ClCompile Include="CaptureOverlay.cpp" />
+    <ClCompile Include="CaptureFont.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h" />
@@ -19,5 +23,9 @@
     <ClInclude Include="SimpleIni.h" />
     <ClInclude Include="Detour.h" />
     <ClInclude Include="HaloHooks.h" />
+    <ClInclude Include="XHttpHooks.h" />
+    <ClInclude Include="DestinyCapture.h" />
+    <ClInclude Include="CaptureOverlay.h" />
+    <ClInclude Include="CaptureFont.h" />
   </ItemGroup>
 </Project>

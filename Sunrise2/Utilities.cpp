@@ -35,6 +35,8 @@ VOID PatchInJump(DWORD* addr, DWORD dest, BOOL linked) {
 DWORD PatchModuleImport(PLDR_DATA_TABLE_ENTRY Module, CHAR* ImportedModuleName, DWORD Ordinal, DWORD PatchAddress)
 {
 	DWORD address = (DWORD)ResolveFunction(ImportedModuleName, Ordinal);
+	Sunrise_Trace("PatchModuleImport %s #%u in module %p -> %08X (export %08X)",
+		ImportedModuleName, Ordinal, Module, PatchAddress, address);
 	if (address == NULL)
 		return S_FALSE;
 
@@ -57,15 +59,20 @@ DWORD PatchModuleImport(PLDR_DATA_TABLE_ENTRY Module, CHAR* ImportedModuleName, 
 			DWORD value = *((DWORD*)importAdd[y]);
 			if (value == address)
 			{
+				DWORD* thunk = (DWORD*)importAdd[y + 1];
+				Sunrise_Trace("  import slot %08X (value %08X), thunk %08X: %08X %08X %08X %08X",
+					importAdd[y], value, importAdd[y + 1], thunk[0], thunk[1], thunk[2], thunk[3]);
 				memcpy((DWORD*)importAdd[y], &PatchAddress, 4);
 				DWORD newCode[4];
 				PatchInJump(newCode, PatchAddress, FALSE);
 				memcpy((DWORD*)importAdd[y + 1], newCode, 16);
+				Sunrise_Trace("  patched, thunk now %08X %08X %08X %08X", thunk[0], thunk[1], thunk[2], thunk[3]);
 				result = S_OK;
 			}
 		}
 		importTable = (XEX_IMPORT_TABLE_ORG*)(((BYTE*)importTable) + importTable->TableSize);
 	}
+	Sunrise_Trace("PatchModuleImport #%u done (%u)", Ordinal, result);
 	return result;
 }
 
@@ -101,14 +108,17 @@ VOID ThreadMe(LPTHREAD_START_ROUTINE lpStartAddress) {
 
 VOID XNotify(LPCWSTR pwszStringParam)
 {
+	Sunrise_Trace("XNotify '%S' (devkit %d, disabled %d)", pwszStringParam, bIsDevkit, bDisableXNotify);
 	if (bIsDevkit || bDisableXNotify) // We don't need a stupid notify on Devkit. Smh...
 		return;
 	XNotifyQueueUI(XNOTIFYUI_TYPE_PREFERRED_REVIEW, XUSER_INDEX_ANY, XNOTIFYUI_PRIORITY_HIGH, (PWCHAR)pwszStringParam, NULL);
+	Sunrise_Trace("XNotify queued");
 }
 
 char SunriseFullPath[MAX_PATH];
 DWORD MountPath(PCHAR Drive, PCHAR Device)
 {
+	Sunrise_Trace("MountPath %s -> %s", Drive, Device);
 	CHAR Destination[MAX_PATH] = { 0 };
 	sprintf_s(Destination, MAX_PATH, (KeGetCurrentProcessType() == PROC_SYSTEM) ? OBJ_SYS_STRING : OBJ_USR_STRING, Drive);
 	ANSI_STRING LinkName, DeviceName;
@@ -174,6 +184,9 @@ VOID Sunrise_Print(const CHAR* fmt, ...)
 	va_start(args, fmt);
 	vfprintf(stdout, fmt, args);
 	va_end(args);
+	// stdout is fully buffered on the console; without this the tail of the
+	// log sits in the buffer and looks like the plugin stopped.
+	fflush(stdout);
 #endif
 }
 
@@ -187,6 +200,7 @@ BYTE INIDATA[652] = {
 // Save changes to (use false) or generate new (use true) Sunrise3.ini
 VOID Writeini(BOOL GenerateNew)
 {
+	Sunrise_Trace("Writeini(%d) enter", GenerateNew);
 	CSimpleIniA ini_Sunrise_W;
 	ini_Sunrise_W.Reset();
 	ini_Sunrise_W.SetSpaces(true);
@@ -209,6 +223,10 @@ VOID Writeini(BOOL GenerateNew)
 			ini_Sunrise_W.SetValue("HALO_OPTIONS", "BlamNetDomain", BlamnetDomain);
 			ini_Sunrise_W.SetBoolValue("HALO_OPTIONS", "ClearCacheOnLaunch", bClearCacheOnLaunch);
 			ini_Sunrise_W.SetBoolValue("HALO_OPTIONS", "LogEventsToStdout", bLogEventsToStdout);
+			ini_Sunrise_W.SetBoolValue("DESTINY_OPTIONS", "PacketCapture", bPacketCapture);
+			ini_Sunrise_W.SetBoolValue("DESTINY_OPTIONS", "CaptureHooksBap", bCaptureHooksBap);
+			ini_Sunrise_W.SetBoolValue("DESTINY_OPTIONS", "CaptureHooksXHttp", bCaptureHooksXHttp);
+			ini_Sunrise_W.SetBoolValue("DESTINY_OPTIONS", "CaptureOverlay", bCaptureOverlay);
 		}
 	}
 
@@ -264,6 +282,7 @@ BOOL RenameSPA(PXEX_SECTION_INFO sectionInfo, DWORD old_value, DWORD new_value, 
 // Read ini values
 VOID Readini()
 {
+	Sunrise_Trace("Readini enter");
 	Sunrise_Dbg("Reading values from Sunrise3.ini");
 	CSimpleIniA ini_Sunrise_R;
 	ini_Sunrise_R.Reset();
@@ -276,6 +295,10 @@ VOID Readini()
 		strcpy(BlamnetDomain, ini_Sunrise_R.GetValue("HALO_OPTIONS", "BlamNetDomain", "xbl.lsp.blam.network"));
 		bClearCacheOnLaunch = ini_Sunrise_R.GetBoolValue("HALO_OPTIONS", "ClearCacheOnLaunch", TRUE);
 		bLogEventsToStdout = ini_Sunrise_R.GetBoolValue("HALO_OPTIONS", "LogEventsToStdout", TRUE);
+		bPacketCapture = ini_Sunrise_R.GetBoolValue("DESTINY_OPTIONS", "PacketCapture", TRUE);
+		bCaptureHooksBap = ini_Sunrise_R.GetBoolValue("DESTINY_OPTIONS", "CaptureHooksBap", TRUE);
+		bCaptureHooksXHttp = ini_Sunrise_R.GetBoolValue("DESTINY_OPTIONS", "CaptureHooksXHttp", TRUE);
+		bCaptureOverlay = ini_Sunrise_R.GetBoolValue("DESTINY_OPTIONS", "CaptureOverlay", TRUE);
 		ini_Sunrise_R.Reset();
 
 		Writeini(FALSE); // This should ensure that any entries missing from the clients ini will be added with default value

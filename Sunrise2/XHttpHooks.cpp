@@ -150,6 +150,17 @@ static DWORD g_next_handle = 0x50000000;
 static XHttpCompletion g_pump_queue[32];
 static int g_pump_count = 0;
 
+// Guards g_handles, g_next_handle and the pump queue. Titles call XHttp from
+// several threads (day0 runs signon and Demonware auth at once) and receive
+// workers deliver completions from their own threads.
+static CRITICAL_SECTION g_xhttp_lock;
+static BOOL g_xhttp_lock_ready = FALSE;
+
+struct XHttpLockScope {
+	XHttpLockScope() { EnterCriticalSection(&g_xhttp_lock); }
+	~XHttpLockScope() { LeaveCriticalSection(&g_xhttp_lock); }
+};
+
 static void BufFree(XHttpBuf* b)
 {
 	if (b->data) {
@@ -195,6 +206,7 @@ static BOOL BufAssign(XHttpBuf* b, const void* src, DWORD src_len)
 
 static XHttpHandle* LookupHandle(DWORD id)
 {
+	XHttpLockScope lock;
 	for (int i = 0; i < XHTTP_MAX_HANDLES; ++i) {
 		if (g_handles[i].in_use && g_handles[i].id == id)
 			return &g_handles[i];
@@ -204,6 +216,7 @@ static XHttpHandle* LookupHandle(DWORD id)
 
 static DWORD CreateHandle(XHttpHandleType type, XNCALLER_TYPE xnc)
 {
+	XHttpLockScope lock;
 	for (int i = 0; i < XHTTP_MAX_HANDLES; ++i) {
 		if (!g_handles[i].in_use && g_handles[i].busy == 0) {
 			XHttpHandle* h = &g_handles[i];
@@ -224,6 +237,7 @@ static DWORD CreateHandle(XHttpHandleType type, XNCALLER_TYPE xnc)
 
 static BOOL CloseHandleId(DWORD id)
 {
+	XHttpLockScope lock;
 	for (int i = 0; i < XHTTP_MAX_HANDLES; ++i) {
 		if (g_handles[i].in_use && g_handles[i].id == id) {
 			// Don't free buffers while PerformXHttpRequest owns them.
@@ -610,8 +624,11 @@ static void ExecuteCompletion(const XHttpCompletion& c)
 
 static void DeliverCompletion(const XHttpCompletion& completion)
 {
+	XHttpLockScope lock;
 	if (g_pump_count < 32)
 		g_pump_queue[g_pump_count++] = completion;
+	else
+		Sunrise_Dbg("XHttp pump queue full, dropping status %08X", completion.status);
 }
 
 static DWORD WINAPI XHttpReceiveWorker(LPVOID param)
@@ -712,14 +729,12 @@ static HINTERNET NTAPI Hook_XHttpOpen(
 static BOOL NTAPI Hook_XHttpCloseHandle(XNCALLER_TYPE /*xnc*/, HINTERNET handle)
 {
 	DWORD id = (DWORD)(ULONG_PTR)handle;
-	Sunrise_Dbg("XHttpCloseHandle enter %08X", id);
 	if (!CloseHandleId(id)) {
 		SetLastError(ERROR_INVALID_HANDLE);
 		Sunrise_Dbg("XHttpCloseHandle leave -> FALSE");
 		return FALSE;
 	}
 	SetLastError(ERROR_SUCCESS);
-	Sunrise_Dbg("XHttpCloseHandle leave -> TRUE");
 	return TRUE;
 }
 
@@ -808,8 +823,6 @@ static DWORD_PTR NTAPI Hook_XHttpSetStatusCallback(
 	DWORD_PTR /*reserved*/)
 {
 	DWORD id = (DWORD)(ULONG_PTR)handle;
-	Sunrise_Dbg("XHttpSetStatusCallback enter %08X cb=%p flags=%08X",
-		id, callback, flags);
 
 	XHttpHandle* h = LookupHandle(id);
 	if (!h) {
@@ -819,7 +832,6 @@ static DWORD_PTR NTAPI Hook_XHttpSetStatusCallback(
 	}
 	XHTTP_STATUS_CALLBACK previous = h->status_callback;
 	h->status_callback = callback;
-	Sunrise_Dbg("XHttpSetStatusCallback leave -> prev=%p", previous);
 	return (DWORD_PTR)previous;
 }
 
@@ -957,9 +969,6 @@ static BOOL NTAPI Hook_XHttpQueryHeaders(
 	DWORD* /*index*/)
 {
 	DWORD id = (DWORD)(ULONG_PTR)hRequest;
-	Sunrise_Dbg("XHttpQueryHeaders enter %08X level=%08X name=%s buflen=%u",
-		id, info_level, name ? name : "(null)",
-		buffer_length ? *buffer_length : 0);
 
 	XHttpHandle* request = LookupHandle(id);
 	if (!request || request->type != kXHttpRequest) {
@@ -1008,8 +1017,7 @@ static BOOL NTAPI Hook_XHttpQueryHeaders(
 		*(DWORD*)buffer = value;
 		*buffer_length = sizeof(DWORD);
 		SetLastError(ERROR_SUCCESS);
-		Sunrise_Dbg("XHttpQueryHeaders leave -> TRUE num=%u", value);
-		return TRUE;
+			return TRUE;
 	}
 
 	std::string result;
@@ -1066,7 +1074,6 @@ static BOOL NTAPI Hook_XHttpQueryHeaders(
 	((char*)buffer)[result.size()] = 0;
 	*buffer_length = (DWORD)result.size();
 	SetLastError(ERROR_SUCCESS);
-	Sunrise_Dbg("XHttpQueryHeaders leave -> TRUE len=%u", *buffer_length);
 	return TRUE;
 }
 
@@ -1078,7 +1085,6 @@ static BOOL NTAPI Hook_XHttpReadData(
 	DWORD* bytes_read)
 {
 	DWORD id = (DWORD)(ULONG_PTR)hRequest;
-	Sunrise_Dbg("XHttpReadData enter %08X want=%u", id, bytes_to_read);
 
 	XHttpHandle* request = LookupHandle(id);
 	if (!request || request->type != kXHttpRequest) {
@@ -1109,14 +1115,12 @@ static BOOL NTAPI Hook_XHttpReadData(
 		completion.info_len = (DWORD)to_copy;
 		DeliverCompletion(completion);
 		SetLastError(ERROR_SUCCESS);
-		Sunrise_Dbg("XHttpReadData leave -> TRUE (async) got=%u", (DWORD)to_copy);
 		return TRUE;
 	}
 
 	if (bytes_read)
 		*bytes_read = (DWORD)to_copy;
 	SetLastError(ERROR_SUCCESS);
-	Sunrise_Dbg("XHttpReadData leave -> TRUE got=%u", (DWORD)to_copy);
 	return TRUE;
 }
 
@@ -1149,22 +1153,26 @@ static BOOL NTAPI Hook_XHttpQueryOption(
 
 static DWORD NTAPI Hook_XHttpDoWork(XNCALLER_TYPE /*xnc*/, HINTERNET handle, DWORD /*reserved*/)
 {
-	Sunrise_Dbg("XHttpDoWork enter %08X queue=%d",
-		(DWORD)(ULONG_PTR)handle, g_pump_count);
 
 	XHttpCompletion pending[32];
-	int count = g_pump_count;
-	if (count > 0) {
-		memcpy(pending, g_pump_queue, count * sizeof(XHttpCompletion));
-		g_pump_count = 0;
+	int count;
+	{
+		// Callbacks run outside the lock; they re-enter XHttp.
+		XHttpLockScope lock;
+		count = g_pump_count;
+		if (count > 0) {
+			memcpy(pending, g_pump_queue, count * sizeof(XHttpCompletion));
+			g_pump_count = 0;
+		}
 	}
 
 	for (int i = 0; i < count; ++i)
 		ExecuteCompletion(pending[i]);
 
+	// BOOL: Demonware's bdXHTTP (day0 sub_83072B60) treats FALSE as a fatal
+	// "XHttpDoWork failed" and aborts the request before XHttpConnect.
 	SetLastError(ERROR_SUCCESS);
-	Sunrise_Dbg("XHttpDoWork leave -> 0 drained=%d", count);
-	return 0;
+	return TRUE;
 }
 
 static BOOL CopyUrlComponent(
@@ -1473,6 +1481,11 @@ static VOID SetupXAuthHooks()
 VOID SetupXHttpHooks()
 {
 	Sunrise_Dbg("SetupXHttpHooks enter");
+
+	if (!g_xhttp_lock_ready) {
+		InitializeCriticalSection(&g_xhttp_lock);
+		g_xhttp_lock_ready = TRUE;
+	}
 
 	SetupXAuthHooks(); 
 

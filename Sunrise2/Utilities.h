@@ -26,8 +26,11 @@ VOID Sunrise_Print(const CHAR* fmt, ...);
 
 #ifdef DO_PRINTS
 #define Sunrise_Dbg(x, ...) { do { Sunrise_Print("[Sunrise3] "  x "\n", __VA_ARGS__); } while(0); }
+// Trace line with tick count and thread id, for finding where a hang is.
+#define Sunrise_Trace(x, ...) { do { Sunrise_Print("[Sunrise3 %u %08X] "  x "\n", GetTickCount(), GetCurrentThreadId(), __VA_ARGS__); } while(0); }
 #else
 #define Sunrise_Dbg
+#define Sunrise_Trace
 #endif
 
 #pragma region Sunrise3 ini
