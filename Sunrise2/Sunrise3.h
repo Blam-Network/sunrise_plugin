@@ -7,11 +7,11 @@
 extern BOOL bIsDevkit;
 extern BOOL bDisableXNotify;
 extern BOOL bAllowRetailPlayers;
-extern BOOL bIgnoreTrueskill;
 extern BOOL bClearCacheOnLaunch;
 extern BOOL bLogEventsToStdout;
 extern BOOL bEnableDevkitSockpatch;
-extern char* BlamnetDomain;
+extern char BlamnetDomain[256];
+extern char DefaultBlamnetDomain[21];
 
 VOID SpoofTitleVersion(PLDR_DATA_TABLE_ENTRY moduleTable);
 VOID SetupHaloPatches();

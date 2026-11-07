@@ -2,6 +2,7 @@
 #include "Sunrise3.h"
 #include "Utilities.h"
 #include "Detour.h"
+#include <ppcintrinsics.h>
 
 XTITLE_SERVER_INFO activeServer;
 
@@ -297,21 +298,154 @@ VOID SetupLoadHooks(PLDR_DATA_TABLE_ENTRY moduleHandle)
 	}
 }
 
-DWORD __stdcall XUserReadStats_hook(DWORD, DWORD, DWORD, DWORD, DWORD, DWORD* pcbResults, DWORD* pResults, void*)
+// XUserReadStats is static XDK code, so its address changes per build. It ends up
+// in XMsgStartIORequest though, so we hook that instead. If the leaderboard
+// read fails we pretend it worked and returned nothing, otherwise matchmaking
+// gets stuck on "stats query failed".
+#define XUSERREADSTATS_APP (HXAMAPP)0xFB
+#define XUSERREADSTATS_MSG 0xB0021
+
+struct stats_read_args
 {
-	if (pcbResults)
-		*pcbResults = 4;
-	if (pResults)
-		*pResults = 0;
+	DWORD title_id;
+	DWORD num_xuids;
+	const XUID* xuids;
+	DWORD num_specs;
+	const void* specs;
+	DWORD results_size;
+	PXUSER_STATS_READ_RESULTS results;
+};
+
+// We run the real read on our own overlapped and complete the game's once it's done.
+struct stats_read
+{
+	XOVERLAPPED overlapped;
+	PXOVERLAPPED game_overlapped;
+	stats_read_args args;
+	stats_read* next;
+};
+
+CRITICAL_SECTION stats_read_lock;
+stats_read* stats_reads = NULL;
+
+bool RemoveStatsRead(stats_read* read)
+{
+	for (stats_read** it = &stats_reads; *it; it = &(*it)->next) {
+		if (*it == read) {
+			*it = read->next;
+			return true;
+		}
+	}
+	return false;
+}
+
+void CompleteOverlapped(PXOVERLAPPED overlapped, DWORD status)
+{
+	overlapped->InternalHigh = 0;
+	overlapped->dwExtendedError = 0;
+	__lwsync();
+	overlapped->InternalLow = status;
+
+	if (overlapped->hEvent) {
+		SetEvent(overlapped->hEvent);
+	}
+}
+
+DWORD WINAPI StatsReadThread(stats_read* read)
+{
+	DWORD status = ERROR_FUNCTION_FAILED;
+	if (SUCCEEDED(XMsgStartIORequest(XUSERREADSTATS_APP, XUSERREADSTATS_MSG, &read->overlapped, &read->args, sizeof(read->args)))) {
+		DWORD bytes;
+		status = XGetOverlappedResult(&read->overlapped, &bytes, TRUE);
+	}
+
+	EnterCriticalSection(&stats_read_lock);
+	// If it's not in the list anymore the game cancelled it.
+	if (RemoveStatsRead(read)) {
+		if (status != ERROR_SUCCESS) {
+			Sunrise_Dbg("Stats read failed (%d), returning no stats", status);
+			read->args.results->dwNumViews = 0;
+			read->args.results->pViews = NULL;
+		}
+		CompleteOverlapped(read->game_overlapped, ERROR_SUCCESS);
+	}
+	LeaveCriticalSection(&stats_read_lock);
+
+	CloseHandle(read->overlapped.hEvent);
+	free(read);
 	return 0;
 }
 
-VOID SetupXUserReadStatsHook(DWORD Address)
+HRESULT XMsgStartIORequestHook(HXAMAPP hxamapp, DWORD dwMessage, PXOVERLAPPED pOverlapped, PVOID pUserBuffer, DWORD cbUserBuffer)
 {
-	Sunrise_Dbg("Ignoring true skill");
-	PatchInJump((DWORD*)Address, (DWORD)&XUserReadStats_hook, false);
+	// Halo always reads stats async, leave anything else alone.
+	if (hxamapp != XUSERREADSTATS_APP || dwMessage != XUSERREADSTATS_MSG || cbUserBuffer != sizeof(stats_read_args)
+		|| !pOverlapped || pOverlapped->pCompletionRoutine) {
+		return XMsgStartIORequest(hxamapp, dwMessage, pOverlapped, pUserBuffer, cbUserBuffer);
+	}
+
+	stats_read* read = (stats_read*)malloc(sizeof(stats_read));
+	if (!read) {
+		return XMsgStartIORequest(hxamapp, dwMessage, pOverlapped, pUserBuffer, cbUserBuffer);
+	}
+
+	memset(read, 0, sizeof(stats_read));
+	read->overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	read->game_overlapped = pOverlapped;
+	// Copy the args, the game's buffer is on its stack.
+	memcpy(&read->args, pUserBuffer, sizeof(stats_read_args));
+
+	pOverlapped->InternalLow = ERROR_IO_PENDING;
+	pOverlapped->InternalHigh = 0;
+	pOverlapped->dwExtendedError = 0;
+	if (pOverlapped->hEvent) {
+		ResetEvent(pOverlapped->hEvent);
+	}
+
+	EnterCriticalSection(&stats_read_lock);
+	read->next = stats_reads;
+	stats_reads = read;
+	LeaveCriticalSection(&stats_read_lock);
+
+	HANDLE thread;
+	DWORD thread_id;
+	ExCreateThread(&thread, 0, &thread_id, (PVOID)XapiThreadStartup, (LPTHREAD_START_ROUTINE)StatsReadThread, read, 0x2 | CREATE_SUSPENDED);
+	XSetThreadProcessor(thread, 4);
+	ResumeThread(thread);
+	CloseHandle(thread);
+
+	return S_OK;
 }
 
+HRESULT XMsgCancelIORequestHook(PXOVERLAPPED pOverlapped, BOOL fWait)
+{
+	EnterCriticalSection(&stats_read_lock);
+	for (stats_read* read = stats_reads; read; read = read->next) {
+		if (read->game_overlapped == pOverlapped) {
+			// xam only knows about our overlapped, cancel that one instead.
+			RemoveStatsRead(read);
+			HRESULT result = XMsgCancelIORequest(&read->overlapped, fWait);
+			CompleteOverlapped(pOverlapped, ERROR_CANCELLED);
+			LeaveCriticalSection(&stats_read_lock);
+			return result;
+		}
+	}
+	LeaveCriticalSection(&stats_read_lock);
+
+	return XMsgCancelIORequest(pOverlapped, fWait);
+}
+
+VOID SetupStatsReadHook()
+{
+	static bool initialized = false;
+	if (!initialized) {
+		InitializeCriticalSection(&stats_read_lock);
+		initialized = true;
+	}
+
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 503, (DWORD)XMsgStartIORequestHook);
+	PatchModuleImport((PLDR_DATA_TABLE_ENTRY)*XexExecutableModuleHandle, MODULE_XAM, 504, (DWORD)XMsgCancelIORequestHook);
+}
 
 // This hook ensures that the utility drive is formatted every mount.
 // This reduces some issues when switching between halo caches.
