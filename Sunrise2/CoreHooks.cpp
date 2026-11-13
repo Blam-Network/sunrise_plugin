@@ -316,12 +316,12 @@ struct stats_read_args
 	PXUSER_STATS_READ_RESULTS results;
 };
 
-// We run the real read on our own overlapped and complete the game's once it's done.
+// The real read runs on our own overlapped, a thread waits on it and then completes the game's.
 struct stats_read
 {
 	XOVERLAPPED overlapped;
 	PXOVERLAPPED game_overlapped;
-	stats_read_args args;
+	PXUSER_STATS_READ_RESULTS results;
 	stats_read* next;
 };
 
@@ -339,10 +339,10 @@ bool RemoveStatsRead(stats_read* read)
 	return false;
 }
 
-void CompleteOverlapped(PXOVERLAPPED overlapped, DWORD status)
+void CompleteOverlapped(PXOVERLAPPED overlapped, DWORD status, DWORD bytes, DWORD extended_error)
 {
-	overlapped->InternalHigh = 0;
-	overlapped->dwExtendedError = 0;
+	overlapped->InternalHigh = bytes;
+	overlapped->dwExtendedError = extended_error;
 	__lwsync();
 	overlapped->InternalLow = status;
 
@@ -351,23 +351,29 @@ void CompleteOverlapped(PXOVERLAPPED overlapped, DWORD status)
 	}
 }
 
+void ReturnNoStats(PXOVERLAPPED overlapped, PXUSER_STATS_READ_RESULTS results)
+{
+	results->dwNumViews = 0;
+	results->pViews = NULL;
+	CompleteOverlapped(overlapped, ERROR_SUCCESS, 0, 0);
+}
+
 DWORD WINAPI StatsReadThread(stats_read* read)
 {
-	DWORD status = ERROR_FUNCTION_FAILED;
-	if (SUCCEEDED(XMsgStartIORequest(XUSERREADSTATS_APP, XUSERREADSTATS_MSG, &read->overlapped, &read->args, sizeof(read->args)))) {
-		DWORD bytes;
-		status = XGetOverlappedResult(&read->overlapped, &bytes, TRUE);
-	}
+	DWORD bytes;
+	DWORD status = XGetOverlappedResult(&read->overlapped, &bytes, TRUE);
 
 	EnterCriticalSection(&stats_read_lock);
 	// If it's not in the list anymore the game cancelled it.
 	if (RemoveStatsRead(read)) {
-		if (status != ERROR_SUCCESS) {
-			Sunrise_Dbg("Stats read failed (%d), returning no stats", status);
-			read->args.results->dwNumViews = 0;
-			read->args.results->pViews = NULL;
+		if (status == ERROR_SUCCESS) {
+			Sunrise_Dbg("Stats read returned %d views", read->results->dwNumViews);
+			CompleteOverlapped(read->game_overlapped, read->overlapped.InternalLow, read->overlapped.InternalHigh, read->overlapped.dwExtendedError);
 		}
-		CompleteOverlapped(read->game_overlapped, ERROR_SUCCESS);
+		else {
+			Sunrise_Dbg("Stats read failed (%d, %08X), returning no stats", status, read->overlapped.dwExtendedError);
+			ReturnNoStats(read->game_overlapped, read->results);
+		}
 	}
 	LeaveCriticalSection(&stats_read_lock);
 
@@ -392,8 +398,7 @@ HRESULT XMsgStartIORequestHook(HXAMAPP hxamapp, DWORD dwMessage, PXOVERLAPPED pO
 	memset(read, 0, sizeof(stats_read));
 	read->overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 	read->game_overlapped = pOverlapped;
-	// Copy the args, the game's buffer is on its stack.
-	memcpy(&read->args, pUserBuffer, sizeof(stats_read_args));
+	read->results = ((stats_read_args*)pUserBuffer)->results;
 
 	pOverlapped->InternalLow = ERROR_IO_PENDING;
 	pOverlapped->InternalHigh = 0;
@@ -402,14 +407,25 @@ HRESULT XMsgStartIORequestHook(HXAMAPP hxamapp, DWORD dwMessage, PXOVERLAPPED pO
 		ResetEvent(pOverlapped->hEvent);
 	}
 
+	// Start the read on the game's thread so xam sees the same request it would without the hook.
+	HRESULT result = XMsgStartIORequest(hxamapp, dwMessage, &read->overlapped, pUserBuffer, cbUserBuffer);
+	if (FAILED(result)) {
+		Sunrise_Dbg("Stats read failed to start (%08X), returning no stats", result);
+		ReturnNoStats(pOverlapped, read->results);
+		CloseHandle(read->overlapped.hEvent);
+		free(read);
+		return S_OK;
+	}
+
 	EnterCriticalSection(&stats_read_lock);
 	read->next = stats_reads;
 	stats_reads = read;
 	LeaveCriticalSection(&stats_read_lock);
 
+	// Title thread, not system. The event handles belong to the title and aren't valid in a system thread.
 	HANDLE thread;
 	DWORD thread_id;
-	ExCreateThread(&thread, 0, &thread_id, (PVOID)XapiThreadStartup, (LPTHREAD_START_ROUTINE)StatsReadThread, read, 0x2 | CREATE_SUSPENDED);
+	ExCreateThread(&thread, 0, &thread_id, (PVOID)XapiThreadStartup, (LPTHREAD_START_ROUTINE)StatsReadThread, read, CREATE_SUSPENDED);
 	XSetThreadProcessor(thread, 4);
 	ResumeThread(thread);
 	CloseHandle(thread);
@@ -425,7 +441,7 @@ HRESULT XMsgCancelIORequestHook(PXOVERLAPPED pOverlapped, BOOL fWait)
 			// xam only knows about our overlapped, cancel that one instead.
 			RemoveStatsRead(read);
 			HRESULT result = XMsgCancelIORequest(&read->overlapped, fWait);
-			CompleteOverlapped(pOverlapped, ERROR_CANCELLED);
+			CompleteOverlapped(pOverlapped, ERROR_CANCELLED, 0, 0);
 			LeaveCriticalSection(&stats_read_lock);
 			return result;
 		}
